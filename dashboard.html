@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code 사용량 대시보드</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a24;
+    --surface2: #22222f;
+    --border: #2e2e3f;
+    --accent: #7c6eff;
+    --accent2: #ff6eb4;
+    --accent3: #45d9a1;
+    --accent4: #ffb545;
+    --text: #e8e8f0;
+    --muted: #8888a0;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; min-height: 100vh; }
+  header { padding: 24px 32px 0; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header span { color: var(--muted); font-size: 0.85rem; }
+  .controls { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .tab-group { display: flex; background: var(--surface); border-radius: 8px; padding: 3px; gap: 2px; }
+  .tab { padding: 6px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.85rem; background: transparent; color: var(--muted); transition: all 0.15s; }
+  .tab.active { background: var(--accent); color: #fff; }
+  select { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 0.85rem; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; padding: 20px 32px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+  .card-label { font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .card-value { font-size: 1.7rem; font-weight: 700; }
+  .card-value.accent  { color: var(--accent); }
+  .card-value.accent2 { color: var(--accent2); }
+  .card-value.accent3 { color: var(--accent3); }
+  .card-value.accent4 { color: var(--accent4); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 32px 32px; }
+  .grid.single { grid-template-columns: 1fr; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .panel h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  .chart-wrap { position: relative; height: 240px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; }
+  .badge.skill    { background: rgba(124,110,255,0.2); color: var(--accent); }
+  .badge.mcp      { background: rgba(255,110,180,0.2); color: var(--accent2); }
+  .badge.subagent { background: rgba(69,217,161,0.2); color: var(--accent3); }
+  .badge.general  { background: rgba(255,181,69,0.2); color: var(--accent4); }
+  .loading { text-align: center; padding: 60px; color: var(--muted); }
+  .err { color: #ff6b6b; padding: 12px; background: rgba(255,107,107,0.1); border-radius: 8px; margin: 20px 32px; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } header { padding: 16px; } .summary, .grid { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+
+<div id="config-banner" style="background:#1a1a24;border-bottom:1px solid #2e2e3f;padding:10px 32px;font-size:0.82rem;color:#ff6b6b;display:none;">
+  ⚠️ Supabase 설정이 필요합니다. 아래 스크립트의 SUPABASE_URL과 SUPABASE_KEY를 설정하세요.
+</div>
+
+<header>
+  <h1>Claude Code 사용량</h1>
+  <span id="last-updated"></span>
+  <div class="controls">
+    <select id="device-filter"><option value="">전체 기기</option></select>
+    <div class="tab-group">
+      <button class="tab active" data-period="day">일간</button>
+      <button class="tab" data-period="week">주간</button>
+      <button class="tab" data-period="month">월간</button>
+    </div>
+  </div>
+</header>
+
+<div class="summary">
+  <div class="card"><div class="card-label">총 도구 호출</div><div class="card-value accent" id="s-total">-</div></div>
+  <div class="card"><div class="card-label">Input 토큰</div><div class="card-value accent2" id="s-input">-</div></div>
+  <div class="card"><div class="card-label">Output 토큰</div><div class="card-value accent3" id="s-output">-</div></div>
+  <div class="card"><div class="card-label">캐시 절감 토큰</div><div class="card-value accent4" id="s-cache">-</div></div>
+  <div class="card"><div class="card-label">Skill 호출</div><div class="card-value" id="s-skill">-</div></div>
+  <div class="card"><div class="card-label">MCP 호출</div><div class="card-value" id="s-mcp">-</div></div>
+</div>
+
+<div id="main-content" class="loading">데이터 로딩 중...</div>
+
+<template id="charts-tpl">
+<div class="grid single">
+  <div class="panel">
+    <h2>사용량 트렌드</h2>
+    <div class="chart-wrap"><canvas id="chart-trend"></canvas></div>
+  </div>
+</div>
+<div class="grid">
+  <div class="panel">
+    <h2>Skill 호출 통계</h2>
+    <div class="chart-wrap"><canvas id="chart-skill"></canvas></div>
+    <table id="tbl-skill"><tr><th>Skill</th><th>호출 수</th></tr></table>
+  </div>
+  <div class="panel">
+    <h2>MCP 도구 통계</h2>
+    <div class="chart-wrap"><canvas id="chart-mcp"></canvas></div>
+    <table id="tbl-mcp"><tr><th>서버</th><th>도구</th><th>호출 수</th></tr></table>
+  </div>
+  <div class="panel">
+    <h2>Sub-agent 사용 통계</h2>
+    <div class="chart-wrap"><canvas id="chart-subagent"></canvas></div>
+    <table id="tbl-subagent"><tr><th>에이전트 유형</th><th>호출 수</th></tr></table>
+  </div>
+  <div class="panel">
+    <h2>일반 도구 분포</h2>
+    <div class="chart-wrap"><canvas id="chart-general"></canvas></div>
+  </div>
+</div>
+<div class="grid single">
+  <div class="panel">
+    <h2>프로젝트별 사용 분포</h2>
+    <div class="chart-wrap" style="height:280px"><canvas id="chart-project"></canvas></div>
+  </div>
+</div>
+<div class="grid single">
+  <div class="panel">
+    <h2>토큰 사용량 추이</h2>
+    <div class="chart-wrap"><canvas id="chart-tokens"></canvas></div>
+  </div>
+</div>
+</template>
+
+<script>
+// ── 설정 ──────────────────────────────────────────────────
+const SUPABASE_URL = 'https://your-project-id.supabase.co';
+const SUPABASE_KEY = 'your-anon-key-here';
+// ──────────────────────────────────────────────────────────
+
+const COLORS = ['#7c6eff','#ff6eb4','#45d9a1','#ffb545','#60c4ff','#ff8c60','#c4e060','#d060c4','#60d4d4','#ffd460'];
+
+let supabase, period = 'day', deviceFilter = '', allData = [], charts = {};
+
+function fmt(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+function periodKey(ts) {
+  const d = new Date(ts);
+  if (period === 'day')   return d.toISOString().slice(0, 10);
+  if (period === 'week')  {
+    const jan4 = new Date(d.getFullYear(), 0, 4);
+    const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
+    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
+  }
+  return d.toISOString().slice(0, 7);
+}
+
+function filtered() {
+  if (!deviceFilter) return allData;
+  return allData.filter(r => r.device_id === deviceFilter);
+}
+
+function destroyCharts() {
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+}
+
+function makeChart(id, type, labels, datasets, opts = {}) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  charts[id] = new Chart(ctx, {
+    type,
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8888a0', boxWidth: 12, font: { size: 11 } } } },
+      scales: type === 'pie' || type === 'doughnut' ? {} : {
+        x: { ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+        y: { ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+      },
+      ...opts,
+    },
+  });
+}
+
+function renderAll() {
+  destroyCharts();
+  const data = filtered();
+
+  // 요약 카드
+  const total = data.length;
+  const inputTok  = data.reduce((s, r) => s + r.input_tokens, 0);
+  const outputTok = data.reduce((s, r) => s + r.output_tokens, 0);
+  const cacheTok  = data.reduce((s, r) => s + r.cache_read_tokens, 0);
+  const skillCnt  = data.filter(r => r.tool_category === 'skill').length;
+  const mcpCnt    = data.filter(r => r.tool_category === 'mcp').length;
+
+  document.getElementById('s-total').textContent  = fmt(total);
+  document.getElementById('s-input').textContent  = fmt(inputTok);
+  document.getElementById('s-output').textContent = fmt(outputTok);
+  document.getElementById('s-cache').textContent  = fmt(cacheTok);
+  document.getElementById('s-skill').textContent  = fmt(skillCnt);
+  document.getElementById('s-mcp').textContent    = fmt(mcpCnt);
+
+  // 트렌드
+  const trendMap = {};
+  data.forEach(r => {
+    const k = periodKey(r.timestamp);
+    if (!trendMap[k]) trendMap[k] = 0;
+    trendMap[k]++;
+  });
+  const trendKeys = Object.keys(trendMap).sort();
+  makeChart('chart-trend', 'line', trendKeys, [{
+    label: '도구 호출',
+    data: trendKeys.map(k => trendMap[k]),
+    borderColor: '#7c6eff', backgroundColor: 'rgba(124,110,255,0.15)', fill: true, tension: 0.3,
+  }]);
+
+  // Skill 바 차트
+  const skillMap = {};
+  data.filter(r => r.tool_category === 'skill').forEach(r => {
+    const k = r.skill_name || '(unknown)';
+    skillMap[k] = (skillMap[k] || 0) + 1;
+  });
+  const skillSorted = Object.entries(skillMap).sort((a,b) => b[1]-a[1]).slice(0, 12);
+  makeChart('chart-skill', 'bar',
+    skillSorted.map(([k]) => k),
+    [{ label: '호출 수', data: skillSorted.map(([,v]) => v), backgroundColor: COLORS.slice(0, skillSorted.length) }],
+    { plugins: { legend: { display: false } } }
+  );
+  const tblSkill = document.getElementById('tbl-skill');
+  tblSkill.innerHTML = '<tr><th>Skill</th><th>호출 수</th></tr>' +
+    skillSorted.map(([k,v]) => `<tr><td><span class="badge skill">${k}</span></td><td>${v}</td></tr>`).join('');
+
+  // MCP 바 차트
+  const mcpMap = {};
+  data.filter(r => r.tool_category === 'mcp').forEach(r => {
+    const k = `${r.mcp_server || '?'} / ${r.mcp_tool || '?'}`;
+    mcpMap[k] = (mcpMap[k] || 0) + 1;
+  });
+  const mcpSorted = Object.entries(mcpMap).sort((a,b) => b[1]-a[1]).slice(0, 12);
+  makeChart('chart-mcp', 'bar',
+    mcpSorted.map(([k]) => k.split('/')[0].trim()),
+    [{ label: '호출 수', data: mcpSorted.map(([,v]) => v), backgroundColor: COLORS.map(c => c + 'cc') }],
+    { plugins: { legend: { display: false } } }
+  );
+  const tblMcp = document.getElementById('tbl-mcp');
+  tblMcp.innerHTML = '<tr><th>서버</th><th>도구</th><th>호출 수</th></tr>' +
+    mcpSorted.map(([k,v]) => {
+      const [srv, tool] = k.split(' / ');
+      return `<tr><td><span class="badge mcp">${srv}</span></td><td>${tool}</td><td>${v}</td></tr>`;
+    }).join('');
+
+  // Sub-agent 바 차트
+  const agentMap = {};
+  data.filter(r => r.tool_category === 'subagent').forEach(r => {
+    const k = r.subagent_type || '(unknown)';
+    agentMap[k] = (agentMap[k] || 0) + 1;
+  });
+  const agentSorted = Object.entries(agentMap).sort((a,b) => b[1]-a[1]);
+  makeChart('chart-subagent', 'bar',
+    agentSorted.map(([k]) => k),
+    [{ label: '호출 수', data: agentSorted.map(([,v]) => v), backgroundColor: '#45d9a1' }],
+    { plugins: { legend: { display: false } } }
+  );
+  const tblAgent = document.getElementById('tbl-subagent');
+  tblAgent.innerHTML = '<tr><th>에이전트 유형</th><th>호출 수</th></tr>' +
+    agentSorted.map(([k,v]) => `<tr><td><span class="badge subagent">${k}</span></td><td>${v}</td></tr>`).join('');
+
+  // 일반 도구 도넛
+  const genMap = {};
+  data.filter(r => r.tool_category === 'general').forEach(r => {
+    genMap[r.tool_name] = (genMap[r.tool_name] || 0) + 1;
+  });
+  const genSorted = Object.entries(genMap).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  makeChart('chart-general', 'doughnut',
+    genSorted.map(([k]) => k),
+    [{ data: genSorted.map(([,v]) => v), backgroundColor: COLORS }]
+  );
+
+  // 프로젝트별 수평 바
+  const projMap = {};
+  data.forEach(r => {
+    const k = r.project_name || 'unknown';
+    projMap[k] = (projMap[k] || 0) + 1;
+  });
+  const projSorted = Object.entries(projMap).sort((a,b) => b[1]-a[1]).slice(0, 15);
+  makeChart('chart-project', 'bar',
+    projSorted.map(([k]) => k),
+    [{ label: '호출 수', data: projSorted.map(([,v]) => v), backgroundColor: '#7c6eff99' }],
+    {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+        y: { ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+      },
+    }
+  );
+
+  // 토큰 추이 스택 바
+  const tokenMap = {};
+  data.forEach(r => {
+    const k = periodKey(r.timestamp);
+    if (!tokenMap[k]) tokenMap[k] = { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
+    tokenMap[k].input          += r.input_tokens;
+    tokenMap[k].output         += r.output_tokens;
+    tokenMap[k].cache_creation += r.cache_creation_tokens;
+    tokenMap[k].cache_read     += r.cache_read_tokens;
+  });
+  const tokenKeys = Object.keys(tokenMap).sort();
+  makeChart('chart-tokens', 'bar', tokenKeys, [
+    { label: 'Input',          data: tokenKeys.map(k => tokenMap[k].input),          backgroundColor: '#7c6eff99', stack: 'a' },
+    { label: 'Output',         data: tokenKeys.map(k => tokenMap[k].output),         backgroundColor: '#ff6eb499', stack: 'a' },
+    { label: 'Cache Creation', data: tokenKeys.map(k => tokenMap[k].cache_creation), backgroundColor: '#45d9a199', stack: 'a' },
+    { label: 'Cache Read',     data: tokenKeys.map(k => tokenMap[k].cache_read),     backgroundColor: '#ffb54599', stack: 'a' },
+  ], { scales: {
+    x: { stacked: true, ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+    y: { stacked: true, ticks: { color: '#8888a0', font: { size: 10 } }, grid: { color: '#2e2e3f' } },
+  }});
+}
+
+async function load() {
+  if (!supabase) return;
+  const content = document.getElementById('main-content');
+  content.innerHTML = '<div class="loading">데이터 로딩 중...</div>';
+
+  try {
+    const { data, error } = await supabase
+      .from('tool_calls')
+      .select('device_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens')
+      .order('timestamp', { ascending: false })
+      .limit(50000);
+
+    if (error) throw error;
+    allData = data || [];
+
+    // 기기 필터 옵션 구성
+    const devices = [...new Set(allData.map(r => r.device_id))].sort();
+    const sel = document.getElementById('device-filter');
+    sel.innerHTML = '<option value="">전체 기기</option>' +
+      devices.map(d => `<option value="${d}" ${d === deviceFilter ? 'selected' : ''}>${d}</option>`).join('');
+
+    document.getElementById('last-updated').textContent = `마지막 업데이트: ${new Date().toLocaleString('ko-KR')}`;
+
+    // 차트 영역 마운트
+    const tpl = document.getElementById('charts-tpl');
+    content.innerHTML = '';
+    content.appendChild(tpl.content.cloneNode(true));
+
+    renderAll();
+  } catch (e) {
+    content.innerHTML = `<div class="err">❌ 데이터 로딩 실패: ${e.message}</div>`;
+  }
+}
+
+function init() {
+  if (SUPABASE_URL.includes('your-project')) {
+    document.getElementById('config-banner').style.display = 'block';
+    document.getElementById('main-content').innerHTML =
+      '<div class="err">dashboard.html 상단의 SUPABASE_URL과 SUPABASE_KEY를 설정하고 다시 여세요.</div>';
+    return;
+  }
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      period = t.dataset.period;
+      renderAll();
+    });
+  });
+
+  document.getElementById('device-filter').addEventListener('change', e => {
+    deviceFilter = e.target.value;
+    renderAll();
+  });
+
+  load();
+}
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
