@@ -52,6 +52,11 @@
   .badge.mcp      { background: rgba(255,110,180,0.2); color: var(--accent2); }
   .badge.subagent { background: rgba(69,217,161,0.2); color: var(--accent3); }
   .badge.general  { background: rgba(255,181,69,0.2); color: var(--accent4); }
+  .mcp-srv { cursor: pointer; }
+  .mcp-srv:hover td { background: var(--surface2); }
+  .caret { display: inline-block; width: 12px; color: var(--muted); font-size: 0.7rem; }
+  .mcp-tool { display: none; }
+  .mcp-tool-name { padding-left: 24px; color: var(--muted); }
   .loading { text-align: center; padding: 60px; color: var(--muted); }
   .err { color: #ff6b6b; padding: 12px; background: rgba(255,107,107,0.1); border-radius: 8px; margin: 20px 32px; }
   @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } header { padding: 16px; } .summary, .grid { padding-left: 16px; padding-right: 16px; } }
@@ -69,7 +74,8 @@
   <div class="controls">
     <select id="device-filter"><option value="">전체 기기</option></select>
     <div class="tab-group">
-      <button class="tab active" data-period="day">일간</button>
+      <button class="tab active" data-period="all">전체</button>
+      <button class="tab" data-period="day">일간</button>
       <button class="tab" data-period="week">주간</button>
       <button class="tab" data-period="month">월간</button>
     </div>
@@ -137,7 +143,7 @@ const SUPABASE_KEY = 'your-anon-key-here';
 
 const COLORS = ['#7c6eff','#ff6eb4','#45d9a1','#ffb545','#60c4ff','#ff8c60','#c4e060','#d060c4','#60d4d4','#ffd460'];
 
-let db, period = 'day', deviceFilter = '', allData = [], charts = {};
+let db, period = 'all', deviceFilter = '', allData = [], charts = {};
 
 function fmt(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
@@ -145,20 +151,31 @@ function fmt(n) {
   return String(n);
 }
 
+// 선택된 기간의 [시작, 끝) 구간 — 현재 시각 기준 롤링 윈도우
+// 일간=최근 1일, 주간=최근 7일, 월간=최근 30일
+function periodRange() {
+  const now = new Date();
+  const days = period === 'day' ? 1 : period === 'week' ? 7 : 30;
+  return [new Date(now.getTime() - days * 86400000), new Date(now.getTime() + 1)];
+}
+
+// 트렌드 차트 묶음 단위: 전체=월별, 일간=시간별, 주간/월간=일별
 function periodKey(ts) {
   const d = new Date(ts);
-  if (period === 'day')   return d.toISOString().slice(0, 10);
-  if (period === 'week')  {
-    const jan4 = new Date(d.getFullYear(), 0, 4);
-    const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
-    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
-  }
-  return d.toISOString().slice(0, 7);
+  const p = n => String(n).padStart(2, '0');
+  if (period === 'all') return `${d.getFullYear()}-${p(d.getMonth() + 1)}`;
+  if (period === 'day') return `${p(d.getHours())}:00`;
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function filtered() {
-  if (!deviceFilter) return allData;
-  return allData.filter(r => r.device_id === deviceFilter);
+  const base = deviceFilter ? allData.filter(r => r.device_id === deviceFilter) : allData;
+  if (period === 'all') return base;
+  const [start, end] = periodRange();
+  return base.filter(r => {
+    const t = new Date(r.timestamp);
+    return t >= start && t < end;
+  });
 }
 
 function destroyCharts() {
@@ -233,24 +250,35 @@ function renderAll() {
   tblSkill.innerHTML = '<tr><th>Skill</th><th>호출 수</th></tr>' +
     skillSorted.map(([k,v]) => `<tr><td><span class="badge skill">${k}</span></td><td>${v}</td></tr>`).join('');
 
-  // MCP 바 차트
-  const mcpMap = {};
+  // MCP 통계 (서버 단위 집계 + 도구별 펼침)
+  const mcpServers = {};
   data.filter(r => r.tool_category === 'mcp').forEach(r => {
-    const k = `${r.mcp_server || '?'} / ${r.mcp_tool || '?'}`;
-    mcpMap[k] = (mcpMap[k] || 0) + 1;
+    const srv = r.mcp_server || '?';
+    const tool = r.mcp_tool || '?';
+    if (!mcpServers[srv]) mcpServers[srv] = { total: 0, tools: {} };
+    mcpServers[srv].total += 1;
+    mcpServers[srv].tools[tool] = (mcpServers[srv].tools[tool] || 0) + 1;
   });
-  const mcpSorted = Object.entries(mcpMap).sort((a,b) => b[1]-a[1]).slice(0, 12);
+  const srvSorted = Object.entries(mcpServers).sort((a,b) => b[1].total - a[1].total);
+  const srvTop = srvSorted.slice(0, 12);
   makeChart('chart-mcp', 'bar',
-    mcpSorted.map(([k]) => k.split('/')[0].trim()),
-    [{ label: '호출 수', data: mcpSorted.map(([,v]) => v), backgroundColor: COLORS.map(c => c + 'cc') }],
+    srvTop.map(([s]) => s),
+    [{ label: '호출 수', data: srvTop.map(([,v]) => v.total), backgroundColor: COLORS.map(c => c + 'cc') }],
     { plugins: { legend: { display: false } } }
   );
   const tblMcp = document.getElementById('tbl-mcp');
-  tblMcp.innerHTML = '<tr><th>서버</th><th>도구</th><th>호출 수</th></tr>' +
-    mcpSorted.map(([k,v]) => {
-      const [srv, tool] = k.split(' / ');
-      return `<tr><td><span class="badge mcp">${srv}</span></td><td>${tool}</td><td>${v}</td></tr>`;
-    }).join('');
+  let mcpRows = '<tr><th></th><th>서버</th><th>호출 수</th></tr>';
+  srvSorted.forEach(([srv, info], i) => {
+    mcpRows += `<tr class="mcp-srv" onclick="toggleMcp(${i})">` +
+      `<td><span class="caret" id="mcp-caret-${i}">▶</span></td>` +
+      `<td><span class="badge mcp">${srv}</span></td>` +
+      `<td>${info.total}</td></tr>`;
+    Object.entries(info.tools).sort((a,b) => b[1]-a[1]).forEach(([t,c]) => {
+      mcpRows += `<tr class="mcp-tool mcp-grp-${i}">` +
+        `<td></td><td class="mcp-tool-name">${t}</td><td>${c}</td></tr>`;
+    });
+  });
+  tblMcp.innerHTML = mcpRows;
 
   // Sub-agent 바 차트
   const agentMap = {};
@@ -321,20 +349,37 @@ function renderAll() {
   }});
 }
 
+function toggleMcp(i) {
+  const caret = document.getElementById('mcp-caret-' + i);
+  const open = caret.textContent === '▶';
+  caret.textContent = open ? '▼' : '▶';
+  document.querySelectorAll('.mcp-grp-' + i).forEach(r => {
+    r.style.display = open ? 'table-row' : 'none';
+  });
+}
+
 async function load() {
   if (!db) return;
   const content = document.getElementById('main-content');
   content.innerHTML = '<div class="loading">데이터 로딩 중...</div>';
 
   try {
-    const { data, error } = await db
-      .from('tool_calls')
-      .select('device_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens')
-      .order('timestamp', { ascending: false })
-      .limit(50000);
-
-    if (error) throw error;
-    allData = data || [];
+    // PostgREST는 한 요청당 기본 1000행으로 잘라내므로 range로 끝까지 페이지네이션
+    const PAGE = 1000;
+    const cols = 'device_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens';
+    let all = [], from = 0;
+    while (true) {
+      const { data, error } = await db
+        .from('tool_calls')
+        .select(cols)
+        .order('timestamp', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    allData = all;
 
     // 기기 필터 옵션 구성
     const devices = [...new Set(allData.map(r => r.device_id))].sort();
