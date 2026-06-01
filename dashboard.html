@@ -137,7 +137,7 @@ const SUPABASE_KEY = 'your-anon-key-here';
 
 const COLORS = ['#7c6eff','#ff6eb4','#45d9a1','#ffb545','#60c4ff','#ff8c60','#c4e060','#d060c4','#60d4d4','#ffd460'];
 
-let supabase, period = 'day', deviceFilter = '', allData = [], charts = {};
+let db, period = 'day', deviceFilter = '', allData = [], charts = {};
 
 function fmt(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
@@ -322,12 +322,12 @@ function renderAll() {
 }
 
 async function load() {
-  if (!supabase) return;
+  if (!db) return;
   const content = document.getElementById('main-content');
   content.innerHTML = '<div class="loading">데이터 로딩 중...</div>';
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('tool_calls')
       .select('device_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens')
       .order('timestamp', { ascending: false })
@@ -362,7 +362,7 @@ function init() {
       '<div class="err">dashboard.html 상단의 SUPABASE_URL과 SUPABASE_KEY를 설정하고 다시 여세요.</div>';
     return;
   }
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   document.querySelectorAll('.tab').forEach(t => {
     t.addEventListener('click', () => {

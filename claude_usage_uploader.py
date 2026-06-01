@@ -17,6 +17,19 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
+# 윈도우 콘솔(cp949)에서 이모지 출력 시 UnicodeEncodeError 방지
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
+# 회사망 SSL 인터셉션 대응: 윈도우 인증서 저장소(회사 root CA 포함)를 사용
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 load_dotenv(Path(__file__).parent / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
