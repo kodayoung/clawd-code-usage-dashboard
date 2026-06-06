@@ -125,6 +125,7 @@ def parse_jsonl(jsonl_path: Path, start_line: int) -> tuple[list[dict], int]:
                 msg = entry.get("message", {})
                 content = msg.get("content", [])
                 usage = msg.get("usage", {})
+                model = msg.get("model")
                 ts_str = entry.get("timestamp", "")
                 session_id = entry.get("sessionId", entry.get("uuid", ""))
 
@@ -152,6 +153,7 @@ def parse_jsonl(jsonl_path: Path, start_line: int) -> tuple[list[dict], int]:
                         "timestamp": ts.isoformat(),
                         "tool_name": name,
                         "project_name": project_name,
+                        "model": model,
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
                         "cache_creation_tokens": cache_creation,

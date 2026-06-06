@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   mcp_tool              text,
   subagent_type         text,
   project_name          text,
+  model                 text,
   input_tokens          int NOT NULL DEFAULT 0,
   output_tokens         int NOT NULL DEFAULT 0,
   cache_creation_tokens int NOT NULL DEFAULT 0,
