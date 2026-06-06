@@ -131,6 +131,12 @@
     <table id="tbl-skill"><tr><th>스킬</th><th>사용 수</th></tr></table>
   </div>
   <div class="panel">
+    <h2>플러그인별 스킬 사용</h2>
+    <p class="hint">스킬을 제공한 플러그인(이름 앞 접두사) 기준으로 묶은 사용량입니다.</p>
+    <div class="chart-wrap"><canvas id="chart-plugin"></canvas></div>
+    <table id="tbl-plugin"><tr><th>플러그인</th><th>사용 수</th></tr></table>
+  </div>
+  <div class="panel">
     <h2>외부 연동(MCP) 사용 순위</h2>
     <p class="hint">외부 도구별 사용 횟수입니다. 서버 행을 누르면 세부 도구가 펼쳐집니다.</p>
     <div class="chart-wrap"><canvas id="chart-mcp"></canvas></div>
@@ -372,8 +378,25 @@ function renderAll() {
     { plugins: { legend: { display: false } } }
   );
   const tblSkill = document.getElementById('tbl-skill');
-  tblSkill.innerHTML = '<tr><th>Skill</th><th>호출 수</th></tr>' +
+  tblSkill.innerHTML = '<tr><th>스킬</th><th>사용 수</th></tr>' +
     skillSorted.map(([k,v]) => `<tr><td><span class="badge skill">${k}</span></td><td>${v}</td></tr>`).join('');
+
+  // 플러그인별 스킬 사용 — skill_name의 'plugin:skill' 접두사로 묶음
+  const pluginMap = {};
+  data.filter(r => r.tool_category === 'skill').forEach(r => {
+    const s = r.skill_name || '';
+    const plugin = s.includes(':') ? s.split(':')[0] : '(내장 스킬)';
+    pluginMap[plugin] = (pluginMap[plugin] || 0) + 1;
+  });
+  const pluginSorted = Object.entries(pluginMap).sort((a,b) => b[1]-a[1]);
+  makeChart('chart-plugin', 'bar',
+    pluginSorted.map(([k]) => k),
+    [{ label: '사용 수', data: pluginSorted.map(([,v]) => v), backgroundColor: COLORS.slice(0, pluginSorted.length) }],
+    { plugins: { legend: { display: false } } }
+  );
+  const tblPlugin = document.getElementById('tbl-plugin');
+  tblPlugin.innerHTML = '<tr><th>플러그인</th><th>사용 수</th></tr>' +
+    pluginSorted.map(([k,v]) => `<tr><td><span class="badge skill">${k}</span></td><td>${v}</td></tr>`).join('');
 
   // MCP 통계 (서버 단위 집계 + 도구별 펼침)
   const mcpServers = {};
@@ -408,7 +431,8 @@ function renderAll() {
   // Sub-agent 바 차트
   const agentMap = {};
   data.filter(r => r.tool_category === 'subagent').forEach(r => {
-    const k = r.subagent_type || '(unknown)';
+    // subagent_type 미지정 시 Claude Code는 기본(general-purpose) 에이전트로 동작
+    const k = r.subagent_type || '미지정(기본 에이전트)';
     agentMap[k] = (agentMap[k] || 0) + 1;
   });
   const agentSorted = Object.entries(agentMap).sort((a,b) => b[1]-a[1]);
