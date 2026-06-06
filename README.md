@@ -45,9 +45,17 @@ python3 claude_usage_uploader.py
 
 `~/.claude/projects/` 하위의 모든 JSONL 파일을 스캔해 Supabase에 업로드합니다. 이미 처리한 줄은 커서로 기록해 중복 업로드를 방지합니다.
 
+> **기존 사용자 — `model` 컬럼 추가 후 재업로드**: 비용 환산을 위해 `tool_calls`에 `model` 컬럼이 추가됐습니다. 이미 데이터를 올린 적이 있다면, SQL Editor에서 아래를 실행해 기존 데이터를 비우고(커서만 지우면 중복되므로 둘 다 비웁니다) 업로더를 한 번 다시 실행하세요.
+>
+> ```sql
+> ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS model text;
+> TRUNCATE tool_calls;
+> TRUNCATE upload_cursor;
+> ```
+
 ### 5. 대시보드 열기
 
-`dashboard.html` 140~141번 줄에 동일한 크레덴셜을 입력합니다.
+`dashboard.html` 상단의 `// ── 설정 ──` 블록에 동일한 크레덴셜을 입력합니다.
 
 ```js
 const SUPABASE_URL = 'https://your-project-id.supabase.co';
@@ -60,15 +68,19 @@ const SUPABASE_KEY = 'your-anon-key-here';
 
 - **기간 필터**: 전체 / 일간 / 주간 / 월간
 - **기기 필터**: 여러 기기에서 업로드한 데이터를 기기별로 구분
-- **요약 카드**: 총 도구 호출 수, Input/Output 토큰, 캐시 절감 토큰, Skill/MCP 호출 수
+- **요약 카드**: 총 도구 호출 수, Input/Output 토큰, 캐시 절감 토큰, 예상 비용(USD), 캐시 히트율, Skill/MCP 호출 수
 - **차트**
   - 사용량 트렌드 (라인)
   - Skill 호출 통계 (바)
   - MCP 도구 통계 (바, 서버별 펼침)
   - Sub-agent 사용 통계 (바)
   - 일반 도구 분포 (도넛)
+  - 작업유형 분포 (도넛)
   - 프로젝트별 사용 분포 (수평 바)
   - 토큰 사용량 추이 (스택 바)
+  - 비용 추이 (라인) + 월말 예상 비용
+
+> 토큰·비용·캐시 지표는 한 메시지의 여러 도구 호출이 중복 계상되지 않도록 `(session_id, timestamp)` 단위로 합산합니다. 비용은 모델별 단가표(Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per 1M; 캐시 쓰기 ×1.25, 읽기 ×0.1)로 환산하며, 모델을 알 수 없는 행은 Opus 단가로 보수적으로 추정합니다.
 
 ## PDF 내보내기
 
@@ -114,6 +126,7 @@ node export_pdf.cjs
 | `mcp_tool` | MCP 도구 이름 (category=mcp 시) |
 | `subagent_type` | 서브에이전트 유형 (category=subagent 시) |
 | `project_name` | 프로젝트 이름 (경로 마지막 세그먼트) |
+| `model` | 응답 모델 ID (비용 환산에 사용) |
 | `input_tokens` | Input 토큰 수 |
 | `output_tokens` | Output 토큰 수 |
 | `cache_creation_tokens` | 캐시 생성 토큰 수 |
