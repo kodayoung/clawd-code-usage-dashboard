@@ -114,6 +114,9 @@
   <div class="card"><div class="card-label">외부 연동(MCP) 사용</div><div class="card-value" id="s-mcp">-</div><div class="card-desc">외부 도구 연동(MCP)을 호출한 횟수</div></div>
   <div class="card"><div class="card-label">작업 1건당 평균 비용</div><div class="card-value accent" id="s-cost-per-session">-</div><div class="card-desc">대화(작업) 한 건에 평균적으로 든 비용(USD)</div></div>
   <div class="card"><div class="card-label">가장 비쌌던 작업</div><div class="card-value accent2" id="s-top-session">-</div><div class="card-desc" id="s-top-session-desc">한 작업에서 가장 많이 든 비용(USD)</div></div>
+  <div class="card"><div class="card-label">지난주 대비 비용</div><div class="card-value accent3" id="s-wow">-</div><div class="card-desc">최근 7일 비용을 그 전 7일과 비교한 증감입니다</div></div>
+  <div class="card"><div class="card-label">아낀 비용(재활용)</div><div class="card-value accent4" id="s-saved">-</div><div class="card-desc">맥락을 재활용(캐시)해 절약한 추정 비용(USD)</div></div>
+  <div class="card"><div class="card-label">비싼 모델 비중</div><div class="card-value" id="s-opus-share">-</div><div class="card-desc">전체 비용 중 고가 모델(Opus·모델 미상 포함)이 차지하는 비율</div></div>
 </div>
 <p style="padding:0 32px 4px;font-size:0.75rem;color:var(--muted);line-height:1.5;">
   ※ <b>토큰</b>은 AI가 글을 처리하는 기본 단위예요(대략 단어 한두 조각). 숫자가 클수록 더 많이 처리했다는 뜻이고, 비용도 그만큼 커집니다.
@@ -308,6 +311,16 @@ function sessionAgg(rows) {
     if (agg[r.session_id]) agg[r.session_id].calls += 1;
   }
   return agg;
+}
+
+// 기기 필터만 적용한 전체 데이터에서 [start, end) 구간의 메시지 단위 총비용(USD)
+function costInRange(start, end) {
+  const base = deviceFilter ? allData.filter(r => r.device_id === deviceFilter) : allData;
+  const rows = base.filter(r => {
+    const t = new Date(r.timestamp);
+    return t >= start && t < end;
+  });
+  return messageRecords(rows).reduce((s, r) => s + costOf(r), 0);
 }
 
 // 도구 호출을 작업유형으로 분류 (tool_name/category 기반, 스키마 변경 불필요)
@@ -576,6 +589,29 @@ function renderAll() {
   // 캐시 절감 비용 + 미매칭 모델 안내
   const cacheSaved = cacheRead * priceFor('opus')[0] * 0.9 / 1e6; // 보수적: opus 단가 기준 표시용
   const unknownCnt = msgs.filter(r => isUnknownModel(r.model)).length;
+
+  // ④ 변화·절감 요약 카드
+  // 지난주 대비: 최근 7일 vs 그 전 7일 (기간 필터와 무관한 고정 기준)
+  const now = new Date();
+  const d7 = 7 * 86400000;
+  const curWeek = costInRange(new Date(now.getTime() - d7), new Date(now.getTime() + 1));
+  const prevWeek = costInRange(new Date(now.getTime() - 2 * d7), new Date(now.getTime() - d7));
+  const wowEl = document.getElementById('s-wow');
+  if (prevWeek <= 0) {
+    wowEl.textContent = '비교 데이터 없음';
+  } else {
+    const pct = (curWeek - prevWeek) / prevWeek * 100;
+    wowEl.textContent = (pct >= 0 ? '▲ ' : '▼ ') + Math.abs(pct).toFixed(0) + '%';
+  }
+  // 아낀 비용(재활용): 기존 cacheSaved 공식 재사용
+  document.getElementById('s-saved').textContent = fmtCost(cacheSaved);
+  // 비싼 모델 비중: Opus + 미상(→Opus 추정) 비용 / 전체 비용
+  const opusCost = msgs
+    .filter(r => (r.model || '').toLowerCase().includes('opus') || isUnknownModel(r.model))
+    .reduce((s, r) => s + costOf(r), 0);
+  document.getElementById('s-opus-share').textContent =
+    totalCost > 0 ? (opusCost / totalCost * 100).toFixed(0) + '%' : '-';
+
   document.getElementById('cost-note').textContent =
     `캐시로 약 ${fmtCost(cacheSaved)} 절감(캐시 읽기 기준).`
     + (unknownCnt > 0 ? ` 모델 미상 메시지 ${unknownCnt}건은 Opus 단가로 추정.` : '');
