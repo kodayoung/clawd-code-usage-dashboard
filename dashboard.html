@@ -168,6 +168,18 @@
     <div class="chart-wrap"><canvas id="chart-worktype"></canvas></div>
   </div>
 </div>
+<div class="grid">
+  <div class="panel">
+    <h2>작업유형별 비용</h2>
+    <p class="hint">어떤 종류의 작업에 비용이 가장 많이 들었는지 보여줍니다(USD).</p>
+    <div class="chart-wrap"><canvas id="chart-worktype-cost"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>작업유형 추세</h2>
+    <p class="hint">시간에 따라 작업 종류 구성이 어떻게 변했는지 보여줍니다(작업 실행 횟수 기준).</p>
+    <div class="chart-wrap"><canvas id="chart-worktype-trend"></canvas></div>
+  </div>
+</div>
 <div class="grid single">
   <div class="panel">
     <h2>비용 추이 <span id="cost-projection" style="float:right;font-size:0.78rem;color:var(--muted);font-weight:400;"></span></h2>
@@ -560,6 +572,9 @@ function renderAll() {
   // ① 작업(세션) 단위 뷰
   renderSessions(data);
 
+  // ② 작업유형 심화
+  renderWorktypeDetail(data);
+
   // 월말 예상 비용 — 기기 필터만 적용한 전체 데이터의 최근 7일 일평균 × 이번 달 일수
   renderProjection();
 }
@@ -593,6 +608,55 @@ function renderSessions(data) {
     `<td>${fmt(s.tokens)}</td>` +
     `<td>${s.calls}</td></tr>`
   ).join('');
+}
+
+
+// ② 작업유형 심화 — 유형별 비용(메시지 단위, 대표 행 귀속) + 유형 추세(행 단위 구성)
+function renderWorktypeDetail(data) {
+  const tc = themeColors();
+
+  // 유형별 비용: 메시지 대표 행의 작업유형에 메시지 비용을 귀속(근사)
+  const costMap = {};
+  messageRecords(data).forEach(r => {
+    const k = classify(r);
+    costMap[k] = (costMap[k] || 0) + costOf(r);
+  });
+  const costSorted = Object.entries(costMap).sort((a, b) => b[1] - a[1]);
+  makeChart('chart-worktype-cost', 'bar',
+    costSorted.map(([k]) => k),
+    [{ label: '비용(USD)', data: costSorted.map(([, v]) => +v.toFixed(4)), backgroundColor: COLORS.slice(0, costSorted.length) }],
+    {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+        y: { ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+      },
+    }
+  );
+
+  // 유형 추세: periodKey 버킷별 × 작업유형별 행 수(구성). 기존 도넛과 동일 분류 기준.
+  const types = [...new Set(data.map(r => classify(r)))];
+  const buckets = {};
+  data.forEach(r => {
+    const k = periodKey(r.timestamp);
+    if (!buckets[k]) buckets[k] = {};
+    const t = classify(r);
+    buckets[k][t] = (buckets[k][t] || 0) + 1;
+  });
+  const keys = Object.keys(buckets).sort();
+  const datasets = types.map((t, i) => ({
+    label: t,
+    data: keys.map(k => buckets[k][t] || 0),
+    backgroundColor: COLORS[i % COLORS.length] + 'cc',
+    stack: 'a',
+  }));
+  makeChart('chart-worktype-trend', 'bar', keys, datasets, {
+    scales: {
+      x: { stacked: true, ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+      y: { stacked: true, ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+    },
+  });
 }
 
 // 최근 7일 일평균 비용으로 이번 달 총비용을 외삽
