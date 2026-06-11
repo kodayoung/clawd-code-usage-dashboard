@@ -84,7 +84,7 @@ function sessionAgg(rows) {
   const a = sessionAgg(rows);
   console.assert(Object.keys(a).length === 2, 'FAIL: 세션 수는 2여야 함');
   console.assert(a.A.calls === 3, 'FAIL: A 도구 호출 수는 3(행 기준)');
-  console.assert(a.A.tokens === 110, 'FAIL: A 분량은 110(메시지 단위 dedupe: 150+10, 중복 150 제외) → 실제 ' + a.A.tokens);
+  console.assert(a.A.tokens === 160, 'FAIL: A 분량은 160(메시지 단위 dedupe: 150 + 10, 중복 150 1회만) → 실제 ' + a.A.tokens);
   console.assert(a.A.first === '2026-06-01T09:00:00Z', 'FAIL: A first는 가장 이른 시각');
   console.assert(a.B.project === 'proj2', 'FAIL: B 프로젝트');
   console.log('sessionAgg OK', a);
