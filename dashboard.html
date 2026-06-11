@@ -75,6 +75,10 @@
   .mcp-tool-name { padding-left: 24px; color: var(--muted); }
   .loading { text-align: center; padding: 60px; color: var(--muted); }
   .err { color: #ff6b6b; padding: 12px; background: rgba(255,107,107,0.1); border-radius: 8px; margin: 20px 32px; }
+  .heatmap { display: grid; grid-template-columns: 32px repeat(24, 1fr); gap: 2px; font-size: 0.62rem; }
+  .heatmap .hm-cell { aspect-ratio: 1; border-radius: 2px; background: var(--surface2); }
+  .heatmap .hm-label { color: var(--muted); display: flex; align-items: center; justify-content: center; }
+  .heatmap .hm-col { color: var(--muted); text-align: center; }
   @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } header { padding: 16px; } .summary, .grid { padding-left: 16px; padding-right: 16px; } }
 </style>
 </head>
@@ -108,6 +112,11 @@
   <div class="card"><div class="card-label">캐시 효율</div><div class="card-value accent3" id="s-hit">-</div><div class="card-desc">읽은 것 중 재활용으로 싸게 처리한 비율. 높을수록 절약</div></div>
   <div class="card"><div class="card-label">스킬 사용</div><div class="card-value" id="s-skill">-</div><div class="card-desc">자동화 기능(스킬)을 실행한 횟수</div></div>
   <div class="card"><div class="card-label">외부 연동(MCP) 사용</div><div class="card-value" id="s-mcp">-</div><div class="card-desc">외부 도구 연동(MCP)을 호출한 횟수</div></div>
+  <div class="card"><div class="card-label">작업 1건당 평균 비용</div><div class="card-value accent" id="s-cost-per-session">-</div><div class="card-desc">대화(작업) 한 건에 평균적으로 든 비용(USD)</div></div>
+  <div class="card"><div class="card-label">가장 비쌌던 작업</div><div class="card-value accent2" id="s-top-session">-</div><div class="card-desc" id="s-top-session-desc">한 작업에서 가장 많이 든 비용(USD)</div></div>
+  <div class="card"><div class="card-label">지난주 대비 비용</div><div class="card-value accent3" id="s-wow">-</div><div class="card-desc">최근 7일 비용을 그 전 7일과 비교한 증감입니다</div></div>
+  <div class="card"><div class="card-label">아낀 비용(재활용)</div><div class="card-value accent4" id="s-saved">-</div><div class="card-desc">맥락을 재활용(캐시)해 절약한 추정 비용(USD)</div></div>
+  <div class="card"><div class="card-label">비싼 모델 비중</div><div class="card-value" id="s-opus-share">-</div><div class="card-desc">전체 비용 중 고가 모델(Opus·모델 미상 포함)이 차지하는 비율</div></div>
 </div>
 <p style="padding:0 32px 4px;font-size:0.75rem;color:var(--muted);line-height:1.5;">
   ※ <b>토큰</b>은 AI가 글을 처리하는 기본 단위예요(대략 단어 한두 조각). 숫자가 클수록 더 많이 처리했다는 뜻이고, 비용도 그만큼 커집니다.
@@ -121,6 +130,13 @@
     <h2>사용량 추이</h2>
     <p class="hint">시간에 따라 작업을 얼마나 실행했는지 보여줍니다.</p>
     <div class="chart-wrap"><canvas id="chart-trend"></canvas></div>
+  </div>
+</div>
+<div class="grid single">
+  <div class="panel">
+    <h2>비싼 작업 Top 10</h2>
+    <p class="hint">대화(작업) 단위로 묶어 비용이 큰 작업을 보여줍니다. "이 작업 하나에 얼마 들었지?"를 확인하세요.</p>
+    <table id="tbl-sessions"><tr><th>날짜</th><th>프로젝트</th><th>비용</th><th>주고받은 분량</th><th>도구 호출</th></tr></table>
   </div>
 </div>
 <div class="grid">
@@ -157,6 +173,25 @@
     <h2>작업유형 분포</h2>
     <p class="hint">작업을 코드편집·탐색·실행 등 종류별로 묶어 비중을 보여줍니다.</p>
     <div class="chart-wrap"><canvas id="chart-worktype"></canvas></div>
+  </div>
+</div>
+<div class="grid">
+  <div class="panel">
+    <h2>작업유형별 비용</h2>
+    <p class="hint">어떤 종류의 작업에 비용이 가장 많이 들었는지 보여줍니다(USD).</p>
+    <div class="chart-wrap"><canvas id="chart-worktype-cost"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>작업유형 추세</h2>
+    <p class="hint">시간에 따라 작업 종류 구성이 어떻게 변했는지 보여줍니다(작업 실행 횟수 기준).</p>
+    <div class="chart-wrap"><canvas id="chart-worktype-trend"></canvas></div>
+  </div>
+</div>
+<div class="grid single">
+  <div class="panel">
+    <h2>작업 리듬 (요일 × 시간대)</h2>
+    <p class="hint">언제 집중적으로 작업했는지 보여줍니다. 색이 진할수록 그 시간대에 더 많이 썼다는 뜻입니다.</p>
+    <div id="heatmap" class="heatmap"></div>
   </div>
 </div>
 <div class="grid single">
@@ -257,6 +292,35 @@ function messageRecords(rows) {
     if (!seen.has(key)) seen.set(key, r);
   }
   return [...seen.values()];
+}
+
+// 세션(작업) 단위 집계: session_id별 비용·분량·도구 호출 수·시작시각·프로젝트.
+// 비용/분량은 메시지 단위(dedupe), 도구 호출 수는 행 단위로 센다.
+function sessionAgg(rows) {
+  const agg = {};
+  for (const r of messageRecords(rows)) {
+    if (!agg[r.session_id]) {
+      agg[r.session_id] = { cost: 0, tokens: 0, calls: 0, first: r.timestamp, project: r.project_name || 'unknown' };
+    }
+    const s = agg[r.session_id];
+    s.cost += costOf(r);
+    s.tokens += r.input_tokens + r.output_tokens;
+    if (r.timestamp < s.first) s.first = r.timestamp;
+  }
+  for (const r of rows) {
+    if (agg[r.session_id]) agg[r.session_id].calls += 1;
+  }
+  return agg;
+}
+
+// 기기 필터만 적용한 전체 데이터에서 [start, end) 구간의 메시지 단위 총비용(USD)
+function costInRange(start, end) {
+  const base = deviceFilter ? allData.filter(r => r.device_id === deviceFilter) : allData;
+  const rows = base.filter(r => {
+    const t = new Date(r.timestamp);
+    return t >= start && t < end;
+  });
+  return messageRecords(rows).reduce((s, r) => s + costOf(r), 0);
 }
 
 // 도구 호출을 작업유형으로 분류 (tool_name/category 기반, 스키마 변경 불필요)
@@ -525,12 +589,151 @@ function renderAll() {
   // 캐시 절감 비용 + 미매칭 모델 안내
   const cacheSaved = cacheRead * priceFor('opus')[0] * 0.9 / 1e6; // 보수적: opus 단가 기준 표시용
   const unknownCnt = msgs.filter(r => isUnknownModel(r.model)).length;
+
+  // ④ 변화·절감 요약 카드
+  // 지난주 대비: 최근 7일 vs 그 전 7일 (기간 필터와 무관한 고정 기준)
+  const now = new Date();
+  const d7 = 7 * 86400000;
+  const curWeek = costInRange(new Date(now.getTime() - d7), new Date(now.getTime() + 1));
+  const prevWeek = costInRange(new Date(now.getTime() - 2 * d7), new Date(now.getTime() - d7));
+  const wowEl = document.getElementById('s-wow');
+  if (prevWeek <= 0) {
+    wowEl.textContent = '비교 데이터 없음';
+  } else {
+    const pct = (curWeek - prevWeek) / prevWeek * 100;
+    wowEl.textContent = (pct >= 0 ? '▲ ' : '▼ ') + Math.abs(pct).toFixed(0) + '%';
+  }
+  // 아낀 비용(재활용): 기존 cacheSaved 공식 재사용
+  document.getElementById('s-saved').textContent = fmtCost(cacheSaved);
+  // 비싼 모델 비중: Opus + 미상(→Opus 추정) 비용 / 전체 비용
+  const opusCost = msgs
+    .filter(r => (r.model || '').toLowerCase().includes('opus') || isUnknownModel(r.model))
+    .reduce((s, r) => s + costOf(r), 0);
+  document.getElementById('s-opus-share').textContent =
+    totalCost > 0 ? (opusCost / totalCost * 100).toFixed(0) + '%' : '-';
+
   document.getElementById('cost-note').textContent =
     `캐시로 약 ${fmtCost(cacheSaved)} 절감(캐시 읽기 기준).`
     + (unknownCnt > 0 ? ` 모델 미상 메시지 ${unknownCnt}건은 Opus 단가로 추정.` : '');
 
+  // ① 작업(세션) 단위 뷰
+  renderSessions(data);
+
+  // ② 작업유형 심화
+  renderWorktypeDetail(data);
+
+  // ③ 작업 리듬 히트맵
+  renderHeatmap(data);
+
   // 월말 예상 비용 — 기기 필터만 적용한 전체 데이터의 최근 7일 일평균 × 이번 달 일수
   renderProjection();
+}
+
+// ① 작업(세션) 단위 뷰 — 평균/최고 비용 카드 + 비싼 작업 Top 10 표
+function renderSessions(data) {
+  const agg = sessionAgg(data);
+  const sessions = Object.values(agg);
+  const sessionCount = sessions.length;
+  const totalCost = sessions.reduce((s, x) => s + x.cost, 0);
+  const avg = sessionCount > 0 ? totalCost / sessionCount : 0;
+  document.getElementById('s-cost-per-session').textContent = sessionCount > 0 ? fmtCost(avg) : '-';
+
+  const sorted = sessions.sort((a, b) => b.cost - a.cost);
+  const top = sorted[0];
+  document.getElementById('s-top-session').textContent = top ? fmtCost(top.cost) : '-';
+  document.getElementById('s-top-session-desc').textContent =
+    top ? `가장 비쌌던 작업 (${top.project})` : '한 작업에서 가장 많이 든 비용(USD)';
+
+  const rows = sorted.slice(0, 10);
+  const tbl = document.getElementById('tbl-sessions');
+  const head = '<tr><th>날짜</th><th>프로젝트</th><th>비용</th><th>주고받은 분량</th><th>도구 호출</th></tr>';
+  if (rows.length === 0) {
+    tbl.innerHTML = head + '<tr><td colspan="5" style="color:var(--muted)">데이터 없음</td></tr>';
+    return;
+  }
+  tbl.innerHTML = head + rows.map(s =>
+    `<tr><td>${new Date(s.first).toLocaleDateString('ko-KR')}</td>` +
+    `<td>${s.project}</td>` +
+    `<td>${fmtCost(s.cost)}</td>` +
+    `<td>${fmt(s.tokens)}</td>` +
+    `<td>${s.calls}</td></tr>`
+  ).join('');
+}
+
+
+// ② 작업유형 심화 — 유형별 비용(메시지 단위, 대표 행 귀속) + 유형 추세(행 단위 구성)
+function renderWorktypeDetail(data) {
+  const tc = themeColors();
+
+  // 유형별 비용: 메시지 대표 행의 작업유형에 메시지 비용을 귀속(근사)
+  const costMap = {};
+  messageRecords(data).forEach(r => {
+    const k = classify(r);
+    costMap[k] = (costMap[k] || 0) + costOf(r);
+  });
+  const costSorted = Object.entries(costMap).sort((a, b) => b[1] - a[1]);
+  makeChart('chart-worktype-cost', 'bar',
+    costSorted.map(([k]) => k),
+    [{ label: '비용(USD)', data: costSorted.map(([, v]) => +v.toFixed(4)), backgroundColor: COLORS.slice(0, costSorted.length) }],
+    {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+        y: { ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+      },
+    }
+  );
+
+  // 유형 추세: periodKey 버킷별 × 작업유형별 행 수(구성). 기존 도넛과 동일 분류 기준.
+  const types = [...new Set(data.map(r => classify(r)))];
+  const buckets = {};
+  data.forEach(r => {
+    const k = periodKey(r.timestamp);
+    if (!buckets[k]) buckets[k] = {};
+    const t = classify(r);
+    buckets[k][t] = (buckets[k][t] || 0) + 1;
+  });
+  const keys = Object.keys(buckets).sort();
+  const datasets = types.map((t, i) => ({
+    label: t,
+    data: keys.map(k => buckets[k][t] || 0),
+    backgroundColor: COLORS[i % COLORS.length] + 'cc',
+    stack: 'a',
+  }));
+  makeChart('chart-worktype-trend', 'bar', keys, datasets, {
+    scales: {
+      x: { stacked: true, ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+      y: { stacked: true, ticks: { color: tc.muted, font: { size: 10 } }, grid: { color: tc.grid } },
+    },
+  });
+}
+
+// ③ 작업 리듬 히트맵 — 요일(0=일)×시간대(0~23), 셀 진하기 = 작업 실행 횟수(행 단위)
+function renderHeatmap(data) {
+  const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
+  const counts = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  let max = 0;
+  data.forEach(r => {
+    const d = new Date(r.timestamp);
+    const c = ++counts[d.getDay()][d.getHours()];
+    if (c > max) max = c;
+  });
+
+  const el = document.getElementById('heatmap');
+  if (!el) return;
+  let html = '<div class="hm-label"></div>';
+  for (let h = 0; h < 24; h++) html += `<div class="hm-col">${h % 6 === 0 ? h : ''}</div>`;
+  for (let day = 0; day < 7; day++) {
+    html += `<div class="hm-label">${DAYS[day]}</div>`;
+    for (let h = 0; h < 24; h++) {
+      const v = counts[day][h];
+      const alpha = max > 0 && v > 0 ? (0.12 + 0.88 * (v / max)).toFixed(3) : 0;
+      const style = v > 0 ? ` style="background:rgba(124,110,255,${alpha})"` : '';
+      html += `<div class="hm-cell"${style} title="${DAYS[day]} ${h}시 · ${v}회"></div>`;
+    }
+  }
+  el.innerHTML = html;
 }
 
 // 최근 7일 일평균 비용으로 이번 달 총비용을 외삽
