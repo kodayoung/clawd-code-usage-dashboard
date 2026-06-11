@@ -108,6 +108,8 @@
   <div class="card"><div class="card-label">캐시 효율</div><div class="card-value accent3" id="s-hit">-</div><div class="card-desc">읽은 것 중 재활용으로 싸게 처리한 비율. 높을수록 절약</div></div>
   <div class="card"><div class="card-label">스킬 사용</div><div class="card-value" id="s-skill">-</div><div class="card-desc">자동화 기능(스킬)을 실행한 횟수</div></div>
   <div class="card"><div class="card-label">외부 연동(MCP) 사용</div><div class="card-value" id="s-mcp">-</div><div class="card-desc">외부 도구 연동(MCP)을 호출한 횟수</div></div>
+  <div class="card"><div class="card-label">작업 1건당 평균 비용</div><div class="card-value accent" id="s-cost-per-session">-</div><div class="card-desc">대화(작업) 한 건에 평균적으로 든 비용(USD)</div></div>
+  <div class="card"><div class="card-label">가장 비쌌던 작업</div><div class="card-value accent2" id="s-top-session">-</div><div class="card-desc" id="s-top-session-desc">한 작업에서 가장 많이 든 비용(USD)</div></div>
 </div>
 <p style="padding:0 32px 4px;font-size:0.75rem;color:var(--muted);line-height:1.5;">
   ※ <b>토큰</b>은 AI가 글을 처리하는 기본 단위예요(대략 단어 한두 조각). 숫자가 클수록 더 많이 처리했다는 뜻이고, 비용도 그만큼 커집니다.
@@ -121,6 +123,13 @@
     <h2>사용량 추이</h2>
     <p class="hint">시간에 따라 작업을 얼마나 실행했는지 보여줍니다.</p>
     <div class="chart-wrap"><canvas id="chart-trend"></canvas></div>
+  </div>
+</div>
+<div class="grid single">
+  <div class="panel">
+    <h2>비싼 작업 Top 10</h2>
+    <p class="hint">대화(작업) 단위로 묶어 비용이 큰 작업을 보여줍니다. "이 작업 하나에 얼마 들었지?"를 확인하세요.</p>
+    <table id="tbl-sessions"><tr><th>날짜</th><th>프로젝트</th><th>비용</th><th>주고받은 분량</th><th>도구 호출</th></tr></table>
   </div>
 </div>
 <div class="grid">
@@ -548,8 +557,42 @@ function renderAll() {
     `캐시로 약 ${fmtCost(cacheSaved)} 절감(캐시 읽기 기준).`
     + (unknownCnt > 0 ? ` 모델 미상 메시지 ${unknownCnt}건은 Opus 단가로 추정.` : '');
 
+  // ① 작업(세션) 단위 뷰
+  renderSessions(data);
+
   // 월말 예상 비용 — 기기 필터만 적용한 전체 데이터의 최근 7일 일평균 × 이번 달 일수
   renderProjection();
+}
+
+// ① 작업(세션) 단위 뷰 — 평균/최고 비용 카드 + 비싼 작업 Top 10 표
+function renderSessions(data) {
+  const agg = sessionAgg(data);
+  const sessions = Object.values(agg);
+  const sessionCount = sessions.length;
+  const totalCost = sessions.reduce((s, x) => s + x.cost, 0);
+  const avg = sessionCount > 0 ? totalCost / sessionCount : 0;
+  document.getElementById('s-cost-per-session').textContent = sessionCount > 0 ? fmtCost(avg) : '-';
+
+  const sorted = sessions.sort((a, b) => b.cost - a.cost);
+  const top = sorted[0];
+  document.getElementById('s-top-session').textContent = top ? fmtCost(top.cost) : '-';
+  document.getElementById('s-top-session-desc').textContent =
+    top ? `가장 비쌌던 작업 (${top.project})` : '한 작업에서 가장 많이 든 비용(USD)';
+
+  const rows = sorted.slice(0, 10);
+  const tbl = document.getElementById('tbl-sessions');
+  const head = '<tr><th>날짜</th><th>프로젝트</th><th>비용</th><th>주고받은 분량</th><th>도구 호출</th></tr>';
+  if (rows.length === 0) {
+    tbl.innerHTML = head + '<tr><td colspan="5" style="color:var(--muted)">데이터 없음</td></tr>';
+    return;
+  }
+  tbl.innerHTML = head + rows.map(s =>
+    `<tr><td>${new Date(s.first).toLocaleDateString('ko-KR')}</td>` +
+    `<td>${s.project}</td>` +
+    `<td>${fmtCost(s.cost)}</td>` +
+    `<td>${fmt(s.tokens)}</td>` +
+    `<td>${s.calls}</td></tr>`
+  ).join('');
 }
 
 // 최근 7일 일평균 비용으로 이번 달 총비용을 외삽
