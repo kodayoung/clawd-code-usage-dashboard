@@ -7,8 +7,12 @@ Claude Code의 도구 호출 로그(`~/.claude/projects/`)를 파싱해 Supabase
 | 파일 | 역할 |
 |------|------|
 | `claude_usage_uploader.py` | JSONL 파싱 → Supabase 업로드 |
-| `dashboard.html` | 브라우저 대시보드 (Supabase 직접 조회) |
+| `src/` · `index.html` | React 대시보드 (Vite, Supabase 직접 조회) |
+| `start.command` | 대시보드 원클릭 실행 (macOS, 더블클릭) |
+| `legacy/dashboard.html` | 구버전 단일 HTML 대시보드 (참고용 보존) |
 | `supabase_schema.sql` | 테이블 및 RLS 정책 DDL |
+
+> 대시보드는 **Vite + React + Recharts**로 작성되어 있으며, 로컬에서 실행합니다. 실행 방법은 아래 5번 참고.
 
 ## 빠른 시작
 
@@ -53,16 +57,30 @@ python3 claude_usage_uploader.py
 > TRUNCATE upload_cursor;
 > ```
 
-### 5. 대시보드 열기
+### 5. 대시보드 실행 (로컬)
 
-`dashboard.html` 상단의 `// ── 설정 ──` 블록에 동일한 크레덴셜을 입력합니다.
+`.env`에 대시보드용 크레덴셜(`VITE_` 접두사)을 함께 입력합니다.
 
-```js
-const SUPABASE_URL = 'https://your-project-id.supabase.co';
-const SUPABASE_KEY = 'your-anon-key-here';
+```env
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_KEY=your-anon-key-here
 ```
 
-이후 `dashboard.html`을 브라우저에서 바로 열면 됩니다 (서버 불필요).
+#### 원클릭 실행 (macOS, 권장)
+
+Finder에서 **`start.command` 파일을 더블클릭**하세요. 최초 1회는 패키지를 자동 설치하고, 이후에는 서버를 띄우고 브라우저를 자동으로 엽니다. 종료하려면 열린 터미널 창에서 `Ctrl+C`를 누르거나 창을 닫습니다.
+
+> 처음 더블클릭 시 "확인되지 않은 개발자" 경고가 뜨면, 파일을 **오른쪽 클릭 → 열기**로 한 번 실행하면 이후엔 그냥 더블클릭으로 열립니다. Node.js가 없으면 [nodejs.org](https://nodejs.org)에서 먼저 설치하세요.
+
+#### 명령어로 직접 실행
+
+```bash
+npm install
+npm run start    # 서버 실행 + 브라우저 자동 열기
+npm run dev      # 서버만 실행 (http://localhost:5173)
+npm run build    # dist/ 로 정적 빌드
+npm run preview  # 빌드 결과 미리보기
+```
 
 ## 대시보드 기능
 
@@ -104,8 +122,9 @@ const { chromium } = require('playwright-chromium');
   const browser = await chromium.launch();
   const page = await browser.newPage();
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('file:///path/to/dashboard.html', { waitUntil: 'networkidle' });
-  await page.click('button[data-period="month"]'); // 월간 탭
+  // 배포 URL 또는 로컬 미리보기(npm run preview) 주소
+  await page.goto('https://your-dashboard.vercel.app', { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '월간' }).click(); // 월간 탭
   await page.waitForTimeout(3000);
   await page.pdf({ path: 'dashboard.pdf', format: 'A3', landscape: true, printBackground: true });
   await browser.close();
