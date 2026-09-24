@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS upload_cursor (
   UNIQUE (device_id, file_path)
 );
 
--- 3. RLS 정책 (개인 프로젝트 → anon key로 읽기/쓰기 허용)
+-- 3. RLS 정책
+--   대시보드(브라우저, anon/publishable key) → tool_calls 읽기만 허용
+--   업로더(로컬 PC, secret/service_role key) → RLS를 우회하므로 정책 불필요
+--   upload_cursor 는 업로더 전용이라 anon 정책을 두지 않는다
 ALTER TABLE tool_calls   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE upload_cursor ENABLE ROW LEVEL SECURITY;
 
@@ -47,26 +50,3 @@ CREATE POLICY "anon read tool_calls"
   ON tool_calls FOR SELECT
   TO anon
   USING (true);
-
--- tool_calls: anon 쓰기 허용 (업로더가 anon key 사용)
-CREATE POLICY "anon insert tool_calls"
-  ON tool_calls FOR INSERT
-  TO anon
-  WITH CHECK (true);
-
--- upload_cursor: anon 읽기/쓰기 허용
-CREATE POLICY "anon read upload_cursor"
-  ON upload_cursor FOR SELECT
-  TO anon
-  USING (true);
-
-CREATE POLICY "anon insert upload_cursor"
-  ON upload_cursor FOR INSERT
-  TO anon
-  WITH CHECK (true);
-
-CREATE POLICY "anon update upload_cursor"
-  ON upload_cursor FOR UPDATE
-  TO anon
-  USING (true)
-  WITH CHECK (true);

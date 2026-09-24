@@ -11,6 +11,7 @@ Claude Code의 도구 호출 로그(`~/.claude/projects/`)를 파싱해 Supabase
 | `start.command` | 대시보드 원클릭 실행 (macOS, 더블클릭) |
 | `legacy/dashboard.html` | 구버전 단일 HTML 대시보드 (참고용 보존) |
 | `supabase_schema.sql` | 테이블 및 RLS 정책 DDL |
+| `supabase_restrict_anon.sql` | 기존 DB에서 anon 쓰기 권한 회수 (1회 실행) |
 
 > 대시보드는 **Vite + React + Recharts**로 작성되어 있으며, 로컬에서 실행합니다. 실행 방법은 아래 5번 참고.
 
@@ -36,10 +37,12 @@ cp .env.example .env
 
 ```env
 SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_KEY=your-anon-key-here
+SUPABASE_SECRET_KEY=your-secret-key-here
 ```
 
-Project Settings → API에서 확인할 수 있습니다.
+Project Settings → API Keys에서 확인할 수 있습니다. 업로더에는 **secret key**(`sb_secret_…`, 또는 legacy `service_role` key)를 넣습니다. anon key에는 쓰기 권한이 없습니다. secret key는 RLS를 우회하는 관리자 키이므로 `.env`에만 두고 절대 커밋하거나 대시보드(`VITE_`)에 넣지 마세요.
+
+> **기존 사용자 — anon 쓰기 권한 회수**: 예전 스키마는 anon key로 쓰기까지 허용했습니다. `.env`에 `SUPABASE_SECRET_KEY`를 넣은 뒤, SQL Editor에서 `supabase_restrict_anon.sql`을 한 번 실행하세요. new API key를 쓰려면 `pip3 install -U supabase`로 최신 버전을 받으세요.
 
 ### 4. 업로더 실행
 
@@ -167,4 +170,4 @@ node export_pdf.cjs
   ```bash
   pip3 install truststore
   ```
-- Supabase anon key는 RLS 정책으로 보호됩니다. 개인 프로젝트 외 용도로 사용 시 정책을 강화하세요.
+- 대시보드용 anon(publishable) key는 브라우저에 그대로 노출되는 공개 키입니다. RLS로 `tool_calls` 읽기만 허용하므로 키를 가진 누구나 사용 기록을 **읽을 수는** 있습니다. 읽기까지 막으려면 Supabase Auth 로그인을 붙이고 `authenticated` 역할에만 읽기를 허용하세요.

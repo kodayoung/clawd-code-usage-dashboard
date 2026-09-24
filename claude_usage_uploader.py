@@ -33,7 +33,9 @@ except ImportError:
 load_dotenv(Path(__file__).parent / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+# 업로더는 RLS를 우회하는 secret key(또는 legacy service_role key)를 쓴다.
+# anon key에는 쓰기 권한이 없다 (supabase_schema.sql 참고).
+SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BATCH_SIZE = 200
@@ -42,7 +44,7 @@ BATCH_SIZE = 200
 def get_supabase_client():
     from supabase import create_client
     if not SUPABASE_URL or not SUPABASE_KEY or "your-project" in SUPABASE_URL:
-        print("❌ .env 파일에 SUPABASE_URL과 SUPABASE_KEY를 설정하세요.")
+        print("❌ .env 파일에 SUPABASE_URL과 SUPABASE_SECRET_KEY를 설정하세요.")
         sys.exit(1)
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
