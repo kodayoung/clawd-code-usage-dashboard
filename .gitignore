@@ -5,3 +5,6 @@ __pycache__/
 reference/
 node_modules/
 dist/
+
+# oh-my-claudecode local state
+.omc/
