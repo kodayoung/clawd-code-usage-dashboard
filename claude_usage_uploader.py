@@ -39,6 +39,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 BATCH_SIZE = 200
+CURSOR_PAGE_SIZE = 1000  # Supabase 기본 max-rows와 같게 둔다
 
 
 def get_supabase_client():
@@ -170,13 +171,23 @@ def parse_jsonl(jsonl_path: Path, start_line: int) -> tuple[list[dict], int]:
 
 def load_cursors(supabase, device_id: str) -> dict[str, int]:
     """이미 처리한 파일별 마지막 줄 번호를 가져옵니다."""
-    result = (
-        supabase.table("upload_cursor")
-        .select("file_path, last_line")
-        .eq("device_id", device_id)
-        .execute()
-    )
-    return {row["file_path"]: row["last_line"] for row in (result.data or [])}
+    # Supabase는 한 번에 최대 1000행만 돌려주므로 페이지 단위로 끝까지 읽는다.
+    # 일부만 읽으면 나머지 파일이 처음부터 다시 업로드돼 중복이 생긴다.
+    cursors = {}
+    start = 0
+    while True:
+        rows = (
+            supabase.table("upload_cursor")
+            .select("file_path, last_line")
+            .eq("device_id", device_id)
+            .order("file_path")
+            .range(start, start + CURSOR_PAGE_SIZE - 1)
+            .execute()
+        ).data or []
+        cursors.update({row["file_path"]: row["last_line"] for row in rows})
+        if len(rows) < CURSOR_PAGE_SIZE:
+            return cursors
+        start += CURSOR_PAGE_SIZE
 
 
 def save_cursor(supabase, device_id: str, file_path: str, last_line: int):
