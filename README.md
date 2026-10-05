@@ -9,14 +9,15 @@ Claude Code(`~/.claude/projects/`)와 Codex(`~/.codex/sessions/`, `~/.codex/arch
 | `usage_uploader.py` | Claude Code + Codex 통합 수집 실행 |
 | `claude_usage_uploader.py` | Claude 파서 및 공통 업로드 (기존 명령도 두 도구 수집) |
 | `codex_usage_uploader.py` | Codex 도구 호출·토큰 이벤트 파서 및 Codex 전용 실행 |
-| `src/` · `index.html` | React 대시보드 (Vite, Supabase 직접 조회) |
-| `start.command` | 대시보드 원클릭 실행 (macOS, 더블클릭) |
+| `index.html` | 브라우저에서 바로 여는 대시보드 (Supabase 직접 조회) |
+| `src/` · `dev.html` | 대시보드 원본 코드와 개발용 화면 |
+| `start.command` | 수정 중 화면을 확인하는 개발 서버 실행 (macOS) |
 | `legacy/dashboard.html` | 구버전 단일 HTML 대시보드 (참고용 보존) |
 | `supabase_schema.sql` | 테이블 및 RLS 정책 DDL |
 | `supabase_add_codex.sql` | 기존 데이터/커서를 보존하는 Codex 스키마 확장 |
 | `supabase_restrict_anon.sql` | 기존 DB에서 anon 쓰기 권한 회수 (1회 실행) |
 
-> 대시보드는 **Vite + React + Recharts**로 작성되어 있으며, 로컬에서 실행합니다. 실행 방법은 아래 5번 참고.
+> **`index.html`을 브라우저에서 직접 열면 됩니다.** 실행에 필요한 React와 차트 코드는 HTML 안에 포함되어 있으며, 인터넷으로 Supabase 데이터를 가져옵니다. 로컬 서버는 필요하지 않습니다.
 
 ## 빠른 시작
 
@@ -75,30 +76,38 @@ Claude는 기존 줄 커서를 유지합니다. Codex는 별도 커서와 이벤
 > ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS model text;
 > ```
 
-### 5. 대시보드 실행 (로컬)
+### 5. 대시보드 열기
 
-`.env`에 대시보드용 크레덴셜(`VITE_` 접두사)을 함께 입력합니다.
+**`index.html`을 더블클릭하거나 브라우저로 끌어다 놓으세요.** 로컬 서버를 띄우지 않아도 Supabase 데이터를 가져와 대시보드를 표시합니다. 데이터 조회에는 인터넷 연결이 필요합니다.
+
+처음 연결하거나 Supabase 설정을 바꿀 때는 `.env`에 대시보드용 **공개 키**를 입력합니다. 업로더용 secret key를 넣지 마세요.
 
 ```env
 VITE_SUPABASE_URL=https://your-project-id.supabase.co
 VITE_SUPABASE_KEY=your-anon-key-here
 ```
 
-#### 원클릭 실행 (macOS, 권장)
-
-Finder에서 **`start.command` 파일을 더블클릭**하세요. 최초 1회는 패키지를 자동 설치하고, 이후에는 서버를 띄우고 브라우저를 자동으로 엽니다. 종료하려면 열린 터미널 창에서 `Ctrl+C`를 누르거나 창을 닫습니다.
-
-> 처음 더블클릭 시 "확인되지 않은 개발자" 경고가 뜨면, 파일을 **오른쪽 클릭 → 열기**로 한 번 실행하면 이후엔 그냥 더블클릭으로 열립니다. Node.js가 없으면 [nodejs.org](https://nodejs.org)에서 먼저 설치하세요.
-
-#### 명령어로 직접 실행
+그런 다음 아래 명령으로 `index.html`을 한 번 생성하세요. 이미 생성된 파일을 여는 데에는 Node.js나 서버가 필요하지 않습니다.
 
 ```bash
 npm install
-npm run start    # 서버 실행 + 브라우저 자동 열기
-npm run dev      # 서버만 실행 (http://localhost:5173)
-npm run build    # dist/ 로 정적 빌드
-npm run preview  # 빌드 결과 미리보기
+npm run build:standalone
 ```
+
+`src/`의 화면 코드를 수정하거나 `.env`의 공개 설정을 변경한 뒤에도 `npm run build:standalone`을 실행하면 변경 사항이 `index.html`에 반영됩니다. 생성된 HTML에는 공개 URL과 anon 또는 publishable key만 포함됩니다. HTML 안에 사용 기록을 저장하지 않으므로 열 때마다 Supabase에서 데이터를 조회합니다.
+
+#### 화면을 수정하면서 확인할 때 (선택)
+
+수정 사항을 바로 확인하려면 개발 서버를 실행하세요. **`start.command`를 더블클릭**하거나 아래 명령을 사용하면 개발용 화면(`/dev.html`)이 열립니다. 서버를 끝내려면 터미널에서 `Ctrl+C`를 누릅니다.
+
+```bash
+npm run dev      # 개발용 화면을 브라우저에서 열기
+npm run start    # 개발용 화면을 브라우저에서 열기
+npm run build    # index.html 재생성 + 배포용 dist/index.html 생성
+npm run preview  # 배포 결과 미리보기
+```
+
+Node.js가 필요하면 [nodejs.org](https://nodejs.org)에서 설치하세요. Vercel에서도 `VITE_SUPABASE_URL`과 `VITE_SUPABASE_KEY`를 환경 변수로 등록하면 빌드할 때 반영됩니다.
 
 ## 대시보드 기능
 
@@ -124,14 +133,15 @@ npm run preview  # 빌드 결과 미리보기
   - 분량(토큰) 사용 추이 (스택 바)
   - 비용 추이 (라인) + 월말 예상 비용
 
-> Claude 토큰은 도구 호출이 있는 메시지를 `(source, device_id, session_id, timestamp)` 단위로 중복 제거해 합산합니다. Codex 토큰은 `token_count.info.total_token_usage`의 누적 차분을 사용하고, 동일 누적값의 한도 갱신 이벤트는 무시합니다. 도구 호출이 없는 Codex 답변도 토큰에 포함됩니다. 캐시는 입력에 포함된 분량을 분리해 저장하며, 추론은 출력의 일부이므로 전체 토큰에 다시 더하지 않습니다. 도구 호출과 토큰 이벤트를 별도로 집계해 사용량 이벤트가 호출 횟수를 늘리지 않습니다.
+> Claude 토큰은 도구 호출이 있는 메시지를 `(source, device_id, session_id, timestamp)` 단위로 중복 제거해 합산합니다. Codex 데스크톱 앱 기록은 응답별 토큰 사용량(`token_usage_record`)과 완료된 도구 호출(`item_completed`)을 수집합니다. 같은 파일에 명령줄 형식의 기록도 있으면 앱 기록을 우선해 중복 집계를 막습니다. 명령줄 기록만 있는 파일은 누적 토큰(`token_count.info.total_token_usage`)의 증가분을 합산하며, 누적값이 같은 한도 갱신 기록은 제외합니다. 도구 호출이 없는 Codex 답변도 토큰에 포함됩니다. 캐시는 입력에 포함된 분량을 분리해 저장하며, 추론은 출력의 일부이므로 전체 토큰에 다시 더하지 않습니다. 도구 호출과 토큰 이벤트를 별도로 집계해 사용량 이벤트가 호출 횟수를 늘리지 않습니다.
 >
 > 비용 지표는 Claude 모델 단가표(Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per 1M; 캐시 쓰기 ×1.25, 읽기 ×0.1)를 사용합니다. **Codex 로그에는 청구 비용이 없어 비용·절감액·비용 예측에서 제외**하며, Codex만 선택하면 비용은 `미산정`으로 표시합니다. 토큰을 요금제 사용 한도 비율로 환산하지 않습니다. 사용량 이벤트가 없는 Codex 로그에서는 도구 호출만 집계됩니다. Codex 스킬은 별도 호출 이벤트가 없는 경우 추정하지 않습니다.
 
 ## 검증
 
 ```bash
-npm test       # 토큰 차분·증분 커서·재시도·부분 줄·혼합 통계 테스트
+npm test                 # 토큰 차분·증분 커서·재시도·부분 줄·혼합 통계 테스트
+npm run test:standalone  # 단일 HTML 생성 및 공개 설정 검사
 npm run build
 ```
 

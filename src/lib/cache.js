@@ -10,15 +10,17 @@ function idbOpen() {
     const req = indexedDB.open(IDB_NAME, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE, { keyPath: 'id' });
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error || new Error('브라우저 캐시를 열 수 없습니다.'));
   });
 }
 
 function idbGetAll(idb) {
   return new Promise((resolve, reject) => {
-    const req = idb.transaction(IDB_STORE).objectStore(IDB_STORE).getAll();
+    const tx = idb.transaction(IDB_STORE);
+    const req = tx.objectStore(IDB_STORE).getAll();
     req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error || new Error('브라우저 캐시를 읽을 수 없습니다.'));
+    tx.onabort = () => reject(tx.error || new Error('브라우저 캐시 읽기가 중단되었습니다.'));
   });
 }
 
@@ -29,7 +31,8 @@ function idbPutAll(idb, rows, clearFirst) {
     if (clearFirst) store.clear();
     rows.forEach(r => store.put(r));
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = event => reject(tx.error || event.target?.error || new Error('브라우저 캐시에 저장할 수 없습니다.'));
+    tx.onabort = () => reject(tx.error || new Error('브라우저 캐시 저장이 중단되었습니다.'));
   });
 }
 
@@ -70,34 +73,56 @@ export async function load() {
   try {
     idb = await idbOpen();
     cached = await idbGetAll(idb);
-  } catch (e) { idb = null; cached = []; }
-
-  const total = await serverCount();
-  let allData, note;
-  if (cached.length === 0) {
-    allData = await fetchRows(null);
-    if (idb) await idbPutAll(idb, allData, true);
-    note = `전체 ${allData.length.toLocaleString()}행 로드`;
-  } else {
-    // 신규 행만 내려받기 — 동시 업로드 트랜잭션 순서로 빠지는 행이 없도록
-    // 커서보다 5분 앞에서부터 겹쳐 받고 id로 중복 제거한다.
-    const cursor = cached.reduce((m, r) => (r.created_at > m ? r.created_at : m), cached[0].created_at);
-    const since = new Date(new Date(cursor).getTime() - 5 * 60000).toISOString();
-    const fresh = await fetchRows(since);
-    const byId = new Map(cached.map(r => [r.id, r]));
-    fresh.forEach(r => byId.set(r.id, r));
-    let merged = [...byId.values()];
-    if (merged.length !== total) {
-      // 서버 쪽 삭제/재업로드(TRUNCATE 등)로 캐시와 어긋남 → 캐시 재구축
-      merged = await fetchRows(null);
-      if (idb) await idbPutAll(idb, merged, true);
-      note = `서버 변경 감지 → 전체 ${merged.length.toLocaleString()}행 재로드`;
-    } else {
-      if (idb && fresh.length) await idbPutAll(idb, fresh, false);
-      note = `캐시 ${cached.length.toLocaleString()}행 + 신규 ${(merged.length - cached.length).toLocaleString()}행`;
-    }
-    allData = merged;
+  } catch {
+    idb?.close();
+    idb = null;
+    cached = [];
   }
-  allData.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
-  return { rows: allData, note };
+
+  // 캐시는 선택 사항이다. 저장 실패가 성공한 데이터 조회를 막지 않게 한다.
+  let cacheWriteFailed = false;
+  async function persist(rows, clearFirst) {
+    if (!idb) return;
+    try {
+      await idbPutAll(idb, rows, clearFirst);
+    } catch {
+      cacheWriteFailed = true;
+      idb.close();
+      idb = null;
+    }
+  }
+
+  try {
+    const total = await serverCount();
+    let allData, note;
+    if (cached.length === 0) {
+      allData = await fetchRows(null);
+      await persist(allData, true);
+      note = `전체 ${allData.length.toLocaleString()}행 로드`;
+    } else {
+      // 신규 행만 내려받기 — 동시 업로드 트랜잭션 순서로 빠지는 행이 없도록
+      // 커서보다 5분 앞에서부터 겹쳐 받고 id로 중복 제거한다.
+      const cursor = cached.reduce((m, r) => (r.created_at > m ? r.created_at : m), cached[0].created_at);
+      const since = new Date(new Date(cursor).getTime() - 5 * 60000).toISOString();
+      const fresh = await fetchRows(since);
+      const byId = new Map(cached.map(r => [r.id, r]));
+      fresh.forEach(r => byId.set(r.id, r));
+      let merged = [...byId.values()];
+      if (merged.length !== total) {
+        // 서버 쪽 삭제/재업로드(TRUNCATE 등)로 캐시와 어긋남 → 캐시 재구축
+        merged = await fetchRows(null);
+        await persist(merged, true);
+        note = `서버 변경 감지 → 전체 ${merged.length.toLocaleString()}행 재로드`;
+      } else {
+        if (fresh.length) await persist(fresh, false);
+        note = `캐시 ${cached.length.toLocaleString()}행 + 신규 ${(merged.length - cached.length).toLocaleString()}행`;
+      }
+      allData = merged;
+    }
+    allData.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+    if (cacheWriteFailed) note += ' · 브라우저 캐시 저장 실패, 데이터 조회는 완료';
+    return { rows: allData, note };
+  } finally {
+    idb?.close();
+  }
 }
