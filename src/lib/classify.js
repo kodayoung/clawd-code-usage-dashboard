@@ -1,14 +1,15 @@
 // 도구 호출을 작업유형으로 분류 (tool_name/category 기반, 스키마 변경 불필요)
 export function classify(r) {
+  if (r.record_type === 'usage') return '모델 응답';
   if (r.tool_category === 'skill')    return '스킬';
   if (r.tool_category === 'mcp')      return 'MCP';
   if (r.tool_category === 'subagent') return '서브에이전트';
-  const n = r.tool_name;
-  if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(n)) return '코드편집';
+  const n = (r.tool_name || '').split('.').pop();
+  if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch'].includes(n)) return '코드편집';
   if (['Read', 'Grep', 'Glob', 'LS'].includes(n))                 return '탐색·읽기';
-  if (['Bash', 'BashOutput', 'KillShell'].includes(n))            return '실행';
-  if (['WebFetch', 'WebSearch'].includes(n))                      return '웹';
-  if (['TodoWrite', 'ExitPlanMode'].includes(n))                  return '계획';
+  if (['Bash', 'BashOutput', 'KillShell', 'exec_command', 'write_stdin', 'shell', 'shell_command'].includes(n)) return '실행';
+  if (['WebFetch', 'WebSearch', 'web', 'web_search'].includes(n)) return '웹';
+  if (['TodoWrite', 'ExitPlanMode', 'update_plan'].includes(n)) return '계획';
   return '기타';
 }
 

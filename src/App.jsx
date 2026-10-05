@@ -19,20 +19,23 @@ import Heatmap from './components/charts/Heatmap.jsx';
 import CostChart from './components/charts/CostChart.jsx';
 import ProjectChart from './components/charts/ProjectChart.jsx';
 import TokensChart from './components/charts/TokensChart.jsx';
+import SourceComparison from './components/SourceComparison.jsx';
+import { filterSource } from './lib/usage.js';
 
 export default function App() {
   const configured = isConfigured();
   const { rows, lastUpdated, loading, error } = useUsageData();
   const [period, setPeriod] = useState('all');
   const [deviceFilter, setDeviceFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
 
   const devices = useMemo(
     () => [...new Set(rows.map(r => r.device_id))].sort(),
     [rows]
   );
   const base = useMemo(
-    () => (deviceFilter ? rows.filter(r => r.device_id === deviceFilter) : rows),
-    [rows, deviceFilter]
+    () => filterSource(deviceFilter ? rows.filter(r => r.device_id === deviceFilter) : rows, sourceFilter),
+    [rows, deviceFilter, sourceFilter]
   );
   const m = useMetrics(base, period);
 
@@ -52,6 +55,8 @@ export default function App() {
         devices={devices}
         deviceFilter={deviceFilter}
         onDeviceChange={setDeviceFilter}
+        sourceFilter={sourceFilter}
+        onSourceChange={setSourceFilter}
         period={period}
         onPeriodChange={setPeriod}
       />
@@ -62,6 +67,7 @@ export default function App() {
 
       {!loading && !error && (
         <>
+          <SourceComparison rows={m.sourceRows} />
           <TrendChart data={m.trend} />
           <SessionsTable rows={m.sessionRows} />
           <div className="grid">

@@ -5,7 +5,7 @@ import { Panel, ChartWrap, axisTick, gridStroke, tooltipStyle } from './common.j
 export default function SubagentChart({ data }) {
   const { colors } = useTheme();
   return (
-    <Panel title="보조 에이전트 사용" hint="Claude가 도움을 받은 보조 AI(서브에이전트) 종류별 횟수입니다.">
+    <Panel title="보조 에이전트 사용" hint="AI가 호출한 보조 에이전트의 종류별 횟수입니다.">
       <ChartWrap>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>

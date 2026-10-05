@@ -1,16 +1,19 @@
-# Claude Code Usage Dashboard
+# Claude Code + Codex Usage Dashboard
 
-Claude Code의 도구 호출 로그(`~/.claude/projects/`)를 파싱해 Supabase에 업로드하고, 브라우저에서 대시보드로 시각화합니다.
+Claude Code(`~/.claude/projects/`)와 Codex(`~/.codex/sessions/`, `~/.codex/archived_sessions/`)의 JSONL 로그를 Supabase에 업로드하고, 도구별·기기별·기간별로 사용량을 비교합니다.
 
 ## 구성
 
 | 파일 | 역할 |
 |------|------|
-| `claude_usage_uploader.py` | JSONL 파싱 → Supabase 업로드 |
+| `usage_uploader.py` | Claude Code + Codex 통합 수집 실행 |
+| `claude_usage_uploader.py` | Claude 파서 및 공통 업로드 (기존 명령도 두 도구 수집) |
+| `codex_usage_uploader.py` | Codex 도구 호출·토큰 이벤트 파서 및 Codex 전용 실행 |
 | `src/` · `index.html` | React 대시보드 (Vite, Supabase 직접 조회) |
 | `start.command` | 대시보드 원클릭 실행 (macOS, 더블클릭) |
 | `legacy/dashboard.html` | 구버전 단일 HTML 대시보드 (참고용 보존) |
 | `supabase_schema.sql` | 테이블 및 RLS 정책 DDL |
+| `supabase_add_codex.sql` | 기존 데이터/커서를 보존하는 Codex 스키마 확장 |
 | `supabase_restrict_anon.sql` | 기존 DB에서 anon 쓰기 권한 회수 (1회 실행) |
 
 > 대시보드는 **Vite + React + Recharts**로 작성되어 있으며, 로컬에서 실행합니다. 실행 방법은 아래 5번 참고.
@@ -20,6 +23,8 @@ Claude Code의 도구 호출 로그(`~/.claude/projects/`)를 파싱해 Supabase
 ### 1. Supabase 프로젝트 생성
 
 [supabase.com](https://supabase.com)에서 프로젝트를 만든 뒤, SQL Editor에서 `supabase_schema.sql`을 실행합니다.
+
+기존 DB에는 `supabase_add_codex.sql`을 한 번 실행하세요. 기존 행은 `source='claude'`, `record_type='tool_call'`로 분류됩니다. 데이터를 삭제하거나 Claude 커서를 초기화할 필요가 없습니다.
 
 ### 2. 패키지 설치
 
@@ -47,17 +52,27 @@ Project Settings → API Keys에서 확인할 수 있습니다. 업로더에는 
 ### 4. 업로더 실행
 
 ```bash
-python3 claude_usage_uploader.py
+python3 usage_uploader.py
 ```
 
-`~/.claude/projects/` 하위의 모든 JSONL 파일을 스캔해 Supabase에 업로드합니다. 이미 처리한 줄은 커서로 기록해 중복 업로드를 방지합니다.
+두 도구의 로그를 모두 스캔합니다. 기존 예약 작업의 `python3 claude_usage_uploader.py` 명령도 이제 두 도구를 수집하므로 예약 명령을 바꿀 필요가 없습니다. 로그가 없는 도구는 파일 0개로 표시합니다. 실제 수집은 **로그가 저장된 PC에서** 실행해야 합니다.
 
-> **기존 사용자 — `model` 컬럼 추가 후 재업로드**: 비용 환산을 위해 `tool_calls`에 `model` 컬럼이 추가됐습니다. 이미 데이터를 올린 적이 있다면, SQL Editor에서 아래를 실행해 기존 데이터를 비우고(커서만 지우면 중복되므로 둘 다 비웁니다) 업로더를 한 번 다시 실행하세요.
+```bash
+python3 usage_uploader.py --source codex       # Codex만 수집
+python3 usage_uploader.py --source claude      # Claude만 수집
+python3 codex_usage_uploader.py                # Codex 전용 실행
+python3 usage_uploader.py --dry-run            # DB 연결 없이 파싱 확인
+python3 usage_uploader.py --codex-dir /path/to/.codex
+```
+
+Codex 홈 디렉터리는 `CODEX_HOME` 환경변수도 지원합니다. `--codex-dir`에는 `sessions` 폴더의 상위 디렉터리를 지정합니다. `--claude-dir`과 `--device-id`로 Claude 로그 경로와 기기 ID도 지정할 수 있습니다.
+
+Claude는 기존 줄 커서를 유지합니다. Codex는 별도 커서와 이벤트 고유 키로 재실행, 업로드 재시도, 로그 아카이브 이동 시 중복을 방지합니다. 작성 중인 마지막 줄은 다음 실행에서 다시 처리하며, 업로드에 실패한 파일은 커서를 갱신하지 않습니다.
+
+> **오래된 DB의 `model` 컬럼**: 컬럼이 없는 DB라면 아래를 먼저 실행하세요. 기존 행의 모델 미상 값은 대시보드에서 추정치로 안내합니다.
 >
 > ```sql
 > ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS model text;
-> TRUNCATE tool_calls;
-> TRUNCATE upload_cursor;
 > ```
 
 ### 5. 대시보드 실행 (로컬)
@@ -90,6 +105,8 @@ npm run preview  # 빌드 결과 미리보기
 - **증분 로드 캐시**: 받은 행을 브라우저 IndexedDB에 저장하고, 이후에는 신규 행만 내려받아 Supabase egress를 절감. 서버에서 데이터를 지우거나 재업로드하면(행 수 불일치) 자동으로 전체를 다시 받아 캐시를 재구축
 - **기간 필터**: 전체 / 일간 / 주간 / 월간
 - **기기 필터**: 여러 기기에서 업로드한 데이터를 기기별로 구분
+- **AI 도구 필터**: 전체 / Claude Code / Codex — 모든 차트·요약에 함께 적용
+- **AI 도구별 비교**: 세션·도구 호출·전체 토큰·캐시 읽기·추론 토큰
 - **라이트/다크 모드**: 헤더의 🌙/☀️ 토글로 전환, 선택은 브라우저에 저장됨
 - **요약 카드** (각 카드에 한 줄 설명 포함): 작업 실행 횟수 · 입력량 · 출력량 · 재활용한 분량(캐시) · 예상 비용(USD) · 캐시 효율(히트율) · 스킬 사용 · 외부 연동(MCP) 사용 · 작업 1건당 평균 비용 · 가장 비쌌던 작업 · 지난주 대비 비용 · 아낀 비용(재활용) · 비싼 모델 비중
 - **차트**
@@ -100,14 +117,23 @@ npm run preview  # 빌드 결과 미리보기
   - 보조 에이전트 사용 (바) — 종류 미지정 호출은 `미지정(기본 에이전트)`로 표기
   - 기본 도구 분포 (도넛)
   - 작업유형 분포 (도넛) — 코드편집·탐색·실행 등으로 분류
-  - 비싼 작업 Top 10 (표) — 대화(세션) 단위 비용·분량·도구 호출 수
+  - 세션별 사용량 Top 10 (표) — 도구별 비용·전체 토큰·호출 수 (Codex 비용은 미산정)
   - 작업유형별 비용 (수평 바) + 작업유형 추세 (스택 바)
   - 작업 리듬 히트맵 — 요일 × 시간대별 사용량
   - 프로젝트별 사용 분포 (수평 바)
   - 분량(토큰) 사용 추이 (스택 바)
   - 비용 추이 (라인) + 월말 예상 비용
 
-> 토큰·비용·캐시 지표는 한 메시지의 여러 도구 호출이 중복 계상되지 않도록 `(session_id, timestamp)` 단위로 합산합니다. 비용은 모델별 단가표(Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per 1M; 캐시 쓰기 ×1.25, 읽기 ×0.1)로 환산하며, 모델을 알 수 없는 행은 Opus 단가로 보수적으로 추정합니다.
+> Claude 토큰은 도구 호출이 있는 메시지를 `(source, device_id, session_id, timestamp)` 단위로 중복 제거해 합산합니다. Codex 토큰은 `token_count.info.total_token_usage`의 누적 차분을 사용하고, 동일 누적값의 한도 갱신 이벤트는 무시합니다. 도구 호출이 없는 Codex 답변도 토큰에 포함됩니다. 캐시는 입력에 포함된 분량을 분리해 저장하며, 추론은 출력의 일부이므로 전체 토큰에 다시 더하지 않습니다. 도구 호출과 토큰 이벤트를 별도로 집계해 사용량 이벤트가 호출 횟수를 늘리지 않습니다.
+>
+> 비용 지표는 Claude 모델 단가표(Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per 1M; 캐시 쓰기 ×1.25, 읽기 ×0.1)를 사용합니다. **Codex 로그에는 청구 비용이 없어 비용·절감액·비용 예측에서 제외**하며, Codex만 선택하면 비용은 `미산정`으로 표시합니다. 토큰을 요금제 사용 한도 비율로 환산하지 않습니다. 사용량 이벤트가 없는 Codex 로그에서는 도구 호출만 집계됩니다. Codex 스킬은 별도 호출 이벤트가 없는 경우 추정하지 않습니다.
+
+## 검증
+
+```bash
+npm test       # 토큰 차분·증분 커서·재시도·부분 줄·혼합 통계 테스트
+npm run build
+```
 
 ## PDF 내보내기
 
@@ -145,7 +171,10 @@ node export_pdf.cjs
 | 컬럼 | 설명 |
 |------|------|
 | `device_id` | 업로드한 기기의 hostname |
-| `session_id` | Claude Code 세션 ID |
+| `session_id` | Claude Code 또는 Codex 세션 ID |
+| `source` | `claude` / `codex` (기존 행은 `claude`) |
+| `record_type` | `tool_call` / `usage` (Codex 토큰 이벤트는 `usage`) |
+| `event_id` | Codex 이벤트 고유 키. 기기·도구별 중복 방지 |
 | `timestamp` | 도구 호출 시각 |
 | `tool_category` | `skill` / `mcp` / `subagent` / `general` |
 | `tool_name` | 원본 도구 이름 |
@@ -157,6 +186,7 @@ node export_pdf.cjs
 | `model` | 응답 모델 ID (비용 환산에 사용) |
 | `input_tokens` | Input 토큰 수 |
 | `output_tokens` | Output 토큰 수 |
+| `reasoning_output_tokens` | Codex 출력 중 추론 토큰 수 (출력의 부분집합) |
 | `cache_creation_tokens` | 캐시 생성 토큰 수 |
 | `cache_read_tokens` | 캐시 읽기 토큰 수 |
 

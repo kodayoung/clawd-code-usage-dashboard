@@ -2,7 +2,7 @@ import { db } from './supabase.js';
 
 // ── IndexedDB 캐시 ──
 // 받은 행을 브라우저에 저장해 두고, 다음 로드부터는 신규 행만 내려받아 egress를 절감한다.
-const IDB_NAME = 'usage-dashboard-cache';
+const IDB_NAME = 'usage-dashboard-cache-v2'; // source/record_type 추가 후 기존 행도 다시 받는다
 const IDB_STORE = 'tool_calls';
 
 function idbOpen() {
@@ -37,7 +37,7 @@ function idbPutAll(idb, rows, clearFirst) {
 // sinceCreatedAt을 주면 그 시각 이후 행만 가져온다.
 async function fetchRows(sinceCreatedAt) {
   const PAGE = 1000;
-  const cols = 'id,created_at,device_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,model,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens';
+  const cols = 'id,created_at,device_id,source,record_type,event_id,session_id,timestamp,tool_category,tool_name,skill_name,mcp_server,mcp_tool,subagent_type,project_name,model,input_tokens,output_tokens,reasoning_output_tokens,cache_creation_tokens,cache_read_tokens';
   let all = [], from = 0;
   while (true) {
     let q = db.from('tool_calls')

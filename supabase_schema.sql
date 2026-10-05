@@ -1,4 +1,4 @@
--- Claude Code 사용량 통계 대시보드 스키마
+-- Claude Code + Codex 사용량 통계 대시보드 스키마
 -- Supabase SQL Editor에 붙여넣고 실행
 
 -- 1. tool_calls 테이블
@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id             text NOT NULL,
   session_id            text NOT NULL,
+  source                text NOT NULL DEFAULT 'claude' CHECK (source IN ('claude', 'codex')),
+  record_type           text NOT NULL DEFAULT 'tool_call' CHECK (record_type IN ('tool_call', 'usage')),
+  event_id              text,
   timestamp             timestamptz NOT NULL,
   tool_category         text NOT NULL CHECK (tool_category IN ('skill', 'mcp', 'subagent', 'general')),
   tool_name             text NOT NULL,
@@ -17,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   model                 text,
   input_tokens          int NOT NULL DEFAULT 0,
   output_tokens         int NOT NULL DEFAULT 0,
+  reasoning_output_tokens int NOT NULL DEFAULT 0,
   cache_creation_tokens int NOT NULL DEFAULT 0,
   cache_read_tokens     int NOT NULL DEFAULT 0,
   created_at            timestamptz NOT NULL DEFAULT now()
@@ -27,6 +31,7 @@ CREATE INDEX IF NOT EXISTS tool_calls_category_idx       ON tool_calls (tool_cat
 CREATE INDEX IF NOT EXISTS tool_calls_device_idx         ON tool_calls (device_id);
 CREATE INDEX IF NOT EXISTS tool_calls_project_idx        ON tool_calls (project_name);
 CREATE INDEX IF NOT EXISTS tool_calls_session_idx        ON tool_calls (session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_source_event_idx ON tool_calls (device_id, source, event_id);
 
 -- 2. upload_cursor 테이블 (중복 업로드 방지)
 CREATE TABLE IF NOT EXISTS upload_cursor (

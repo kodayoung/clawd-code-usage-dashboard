@@ -8,7 +8,7 @@ export default function CostChart({ data, projection, note }) {
     <div className="grid single">
       <Panel
         title="비용 추이 "
-        hint="시간에 따른 예상 비용(USD) 변화입니다."
+        hint="Claude Code의 예상 비용(USD) 변화입니다. Codex 비용은 미산정입니다."
         extra={<span className="cost-projection">{projection}</span>}
       >
         <ChartWrap>

@@ -1,3 +1,5 @@
+import { sourceOf, isToolCall, sessionKey } from './usage.js';
+
 // 모델별 단가 (per 1M tokens, [input, output]) — 2026-06 기준
 const PRICING = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5] };
 
@@ -16,6 +18,8 @@ export function isUnknownModel(model) {
 
 // 캐시 쓰기 = input×1.25, 캐시 읽기 = input×0.1
 export function costOf(rec) {
+  // Codex 로그에는 실제 청구 비용이 없다. Claude 단가를 적용하지 않는다.
+  if (sourceOf(rec) === 'codex') return 0;
   const [pin, pout] = priceFor(rec.model);
   return (rec.input_tokens * pin + rec.output_tokens * pout
     + rec.cache_creation_tokens * pin * 1.25 + rec.cache_read_tokens * pin * 0.1) / 1e6;
@@ -26,7 +30,8 @@ export function costOf(rec) {
 export function messageRecords(rows) {
   const seen = new Map();
   for (const r of rows) {
-    const key = r.session_id + '|' + r.timestamp;
+    if (sourceOf(r) === 'codex' && isToolCall(r)) continue;
+    const key = sessionKey(r) + '|' + (r.record_type === 'usage' ? (r.event_id || r.id) : r.timestamp);
     if (!seen.has(key)) seen.set(key, r);
   }
   return [...seen.values()];
@@ -36,17 +41,19 @@ export function messageRecords(rows) {
 // 비용/분량은 메시지 단위(dedupe), 도구 호출 수는 행 단위로 센다.
 export function sessionAgg(rows) {
   const agg = {};
-  for (const r of messageRecords(rows)) {
-    if (!agg[r.session_id]) {
-      agg[r.session_id] = { cost: 0, tokens: 0, calls: 0, first: r.timestamp, project: r.project_name || 'unknown' };
-    }
-    const s = agg[r.session_id];
-    s.cost += costOf(r);
-    s.tokens += r.input_tokens + r.output_tokens;
-    if (r.timestamp < s.first) s.first = r.timestamp;
-  }
   for (const r of rows) {
-    if (agg[r.session_id]) agg[r.session_id].calls += 1;
+    const key = sessionKey(r);
+    if (!agg[key]) agg[key] = {
+      source: sourceOf(r), cost: sourceOf(r) === 'codex' ? null : 0,
+      tokens: 0, calls: 0, first: r.timestamp, project: r.project_name || 'unknown',
+    };
+    if (r.timestamp < agg[key].first) agg[key].first = r.timestamp;
+    if (isToolCall(r)) agg[key].calls += 1;
+  }
+  for (const r of messageRecords(rows)) {
+    const s = agg[sessionKey(r)];
+    if (s.cost !== null) s.cost += costOf(r);
+    s.tokens += r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens;
   }
   return agg;
 }

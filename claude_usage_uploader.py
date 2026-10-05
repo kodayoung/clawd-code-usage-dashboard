@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Claude Code 사용량 업로더
-~/.claude/projects/ 하위 JSONL 파일을 파싱해서 Supabase에 업로드합니다.
+Claude Code + Codex 사용량 업로더
+기존 실행 명령도 두 도구의 JSONL 파일을 Supabase에 업로드합니다.
 
 사용법:
   pip install supabase python-dotenv
@@ -9,6 +9,7 @@ Claude Code 사용량 업로더
 """
 
 import json
+import argparse
 import socket
 import sys
 from datetime import datetime, timezone
@@ -205,36 +206,67 @@ def save_cursor(supabase, device_id: str, file_path: str, last_line: int):
 def upload_batch(supabase, device_id: str, records: list[dict]):
     for i in range(0, len(records), BATCH_SIZE):
         batch = [{"device_id": device_id, **r} for r in records[i : i + BATCH_SIZE]]
-        supabase.table("tool_calls").insert(batch).execute()
+        if all(r.get("event_id") for r in batch):
+            supabase.table("tool_calls").upsert(
+                batch, on_conflict="device_id,source,event_id", ignore_duplicates=True,
+            ).execute()
+        else:
+            supabase.table("tool_calls").insert(batch).execute()
 
 
-def main():
-    supabase = get_supabase_client()
-    device_id = socket.gethostname()
+def main(default_source="all"):
+    from codex_usage_uploader import parse_codex_jsonl
+
+    parser = argparse.ArgumentParser(description="Claude Code / Codex 사용량 수집")
+    parser.add_argument("--source", choices=("all", "claude", "codex"), default=default_source)
+    parser.add_argument("--device-id", default=socket.gethostname())
+    parser.add_argument("--claude-dir", type=Path, default=CLAUDE_PROJECTS_DIR)
+    parser.add_argument("--codex-dir", type=Path, default=Path(os.getenv("CODEX_HOME") or Path.home() / ".codex"))
+    parser.add_argument("--dry-run", action="store_true", help="DB 연결 없이 로그 탐색/파싱만 수행")
+    args = parser.parse_args()
+
+    supabase = None if args.dry_run else get_supabase_client()
+    device_id = args.device_id
     print(f"기기 ID: {device_id}")
 
-    cursors = load_cursors(supabase, device_id)
+    cursors = {} if args.dry_run else load_cursors(supabase, device_id)
 
-    jsonl_files = sorted(CLAUDE_PROJECTS_DIR.rglob("*.jsonl"))
-    print(f"JSONL 파일 {len(jsonl_files)}개 탐색 중...")
+    files = []
+    if args.source in ("all", "claude"):
+        files.extend(("claude", p, parse_jsonl) for p in sorted(args.claude_dir.expanduser().rglob("*.jsonl")))
+    if args.source in ("all", "codex"):
+        codex_dir = args.codex_dir.expanduser()
+        for folder in ("sessions", "archived_sessions"):
+            files.extend(("codex", p, parse_codex_jsonl) for p in sorted((codex_dir / folder).rglob("*.jsonl")))
+    for source in ("claude", "codex"):
+        if args.source in ("all", source):
+            count = sum(s == source for s, _, _ in files)
+            print(f"{source}: JSONL 파일 {count}개" + (" (이 기기에 로그가 없습니다)" if count == 0 else ""))
 
     total_new = 0
-    for jsonl_path in jsonl_files:
-        path_key = str(jsonl_path)
+    failures = 0
+    for source, jsonl_path, parse in files:
+        # Claude 커서는 기존 예약 실행과 호환; Codex는 별도 네임스페이스.
+        path_key = str(jsonl_path) if source == "claude" else "codex:" + str(jsonl_path.resolve())
         start_line = cursors.get(path_key, 0)
+        try:
+            records, last_line = parse(jsonl_path, start_line)
+            if not args.dry_run:
+                if records:
+                    upload_batch(supabase, device_id, records)
+                if last_line != start_line:
+                    save_cursor(supabase, device_id, path_key, last_line)
+            total_new += len(records)
+            if records:
+                print(f"  [{source}] {jsonl_path.name}: {len(records)}건 {'파싱' if args.dry_run else '처리'}")
+        except Exception as exc:
+            failures += 1
+            # HTTP 예외에는 헤더/본문이 포함될 수 있어 예외 타입만 표시.
+            print(f"  [{source}] {jsonl_path.name}: 실패 ({type(exc).__name__}), 커서는 유지됩니다.")
 
-        records, last_line = parse_jsonl(jsonl_path, start_line)
-        if not records:
-            if last_line > start_line:
-                save_cursor(supabase, device_id, path_key, last_line)
-            continue
-
-        upload_batch(supabase, device_id, records)
-        save_cursor(supabase, device_id, path_key, last_line)
-        total_new += len(records)
-        print(f"  {jsonl_path.name}: {len(records)}건 업로드")
-
-    print(f"\n✅ 완료: 총 {total_new}건 업로드")
+    print(f"\n{'❌' if failures else '✅'} 완료: 총 {total_new}건 {'파싱' if args.dry_run else '처리'}, 실패 {failures}개")
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

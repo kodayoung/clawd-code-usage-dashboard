@@ -2,14 +2,19 @@ import { useMemo } from 'react';
 import { costOf, isUnknownModel, messageRecords, sessionAgg, costInRange } from '../lib/cost.js';
 import { classify, periodKey, filterRows } from '../lib/classify.js';
 import { fmt, fmtCost } from '../lib/format.js';
+import { sourceOf, isToolCall, sessionKey } from '../lib/usage.js';
 
-// base = 기기 필터만 적용한 전체 데이터, period = 'all'|'day'|'week'|'month'
-// renderAll + renderSessions + renderWorktypeDetail + renderHeatmap + renderProjection 의 계산을
-// 로직 변경 없이 한 곳으로 옮긴 것.
+// base = AI 도구·기기 필터를 적용한 데이터, period = 'all'|'day'|'week'|'month'
 export function useMetrics(base, period) {
-  return useMemo(() => {
-    const data = filterRows(base, period);
-    const msgs = messageRecords(data);
+  return useMemo(() => calculateMetrics(base, period), [base, period]);
+}
+
+export function calculateMetrics(base, period) {
+    const filtered = filterRows(base, period);
+    const data = filtered.filter(isToolCall);
+    const msgs = messageRecords(filtered);
+    const pricedMsgs = msgs.filter(r => sourceOf(r) === 'claude');
+    const hasClaude = filtered.some(r => sourceOf(r) === 'claude');
     const key = ts => periodKey(ts, period);
 
     // ── 요약 카드 ──
@@ -109,12 +114,12 @@ export function useMetrics(base, period) {
 
     // ── 비용 추이 ──
     const costMap = {};
-    msgs.forEach(r => { const k = key(r.timestamp); costMap[k] = (costMap[k] || 0) + costOf(r); });
+    pricedMsgs.forEach(r => { const k = key(r.timestamp); costMap[k] = (costMap[k] || 0) + costOf(r); });
     const cost = Object.keys(costMap).sort().map(k => ({ label: k, value: +costMap[k].toFixed(4) }));
 
     // ── 캐시 절감 + 미매칭 모델 안내 ──
-    const cacheSaved = cacheRead * 5 * 0.9 / 1e6; // 보수적: opus input 단가($5) 기준 표시용
-    const unknownCnt = msgs.filter(r => isUnknownModel(r.model)).length;
+    const cacheSaved = pricedMsgs.reduce((s, r) => s + r.cache_read_tokens, 0) * 5 * 0.9 / 1e6;
+    const unknownCnt = pricedMsgs.filter(r => isUnknownModel(r.model)).length;
 
     // ── 변화·절감 요약 카드 ──
     const now = new Date();
@@ -128,25 +133,27 @@ export function useMetrics(base, period) {
       const pct = (curWeek - prevWeek) / prevWeek * 100;
       wow = (pct >= 0 ? '▲ ' : '▼ ') + Math.abs(pct).toFixed(0) + '%';
     }
-    const opusCost = msgs
+    const opusCost = pricedMsgs
       .filter(r => (r.model || '').toLowerCase().includes('opus') || isUnknownModel(r.model))
       .reduce((s, r) => s + costOf(r), 0);
     const opusShare = totalCost > 0 ? (opusCost / totalCost * 100).toFixed(0) + '%' : '-';
 
-    const costNote = `캐시로 약 ${fmtCost(cacheSaved)} 절감(캐시 읽기 기준).`
+    const costNote = `Claude Code 캐시로 약 ${fmtCost(cacheSaved)} 절감(캐시 읽기 기준). Codex 비용은 미산정이며 비용 지표에 포함되지 않습니다.`
       + (unknownCnt > 0 ? ` 모델 미상 메시지 ${unknownCnt}건은 Opus 단가로 추정.` : '');
 
     // ── 작업(세션) 단위 뷰 ──
-    const sessions = Object.values(sessionAgg(data)).sort((a, b) => b.cost - a.cost);
-    const sessionCount = sessions.length;
-    const sessionTotalCost = sessions.reduce((s, x) => s + x.cost, 0);
+    const sessions = Object.values(sessionAgg(filtered)).sort((a, b) =>
+      ((b.cost || 0) - (a.cost || 0)) || b.tokens - a.tokens);
+    const pricedSessions = sessions.filter(s => s.cost !== null);
+    const sessionCount = pricedSessions.length;
+    const sessionTotalCost = pricedSessions.reduce((s, x) => s + x.cost, 0);
     const avgCost = sessionCount > 0 ? sessionTotalCost / sessionCount : 0;
-    const topSession = sessions[0] || null;
+    const topSession = pricedSessions[0] || null;
     const sessionRows = sessions.slice(0, 10);
 
     // ── 작업유형별 비용 ──
     const wtCostMap = {};
-    msgs.forEach(r => { const k = classify(r); wtCostMap[k] = (wtCostMap[k] || 0) + costOf(r); });
+    pricedMsgs.forEach(r => { const k = classify(r); wtCostMap[k] = (wtCostMap[k] || 0) + costOf(r); });
     const worktypeCost = Object.entries(wtCostMap).sort((a, b) => b[1] - a[1])
       .map(([name, v]) => ({ name, value: +v.toFixed(4) }));
 
@@ -178,7 +185,7 @@ export function useMetrics(base, period) {
 
     // ── 월말 예상 비용 ──
     const weekAgo = new Date(now.getTime() - d7);
-    const recent = messageRecords(base.filter(r => new Date(r.timestamp) >= weekAgo));
+    const recent = messageRecords(base.filter(r => sourceOf(r) === 'claude' && new Date(r.timestamp) >= weekAgo));
     let projection = '';
     if (recent.length > 0) {
       const days = new Set(recent.map(r => new Date(r.timestamp).toISOString().slice(0, 10)));
@@ -188,26 +195,38 @@ export function useMetrics(base, period) {
       projection = `월말 예상 ${fmtCost(dailyAvg * daysInMonth)}` + (confident ? '' : ' (표본 부족)');
     }
 
+    const sourceRows = ['claude', 'codex'].map(source => {
+      const rows = filtered.filter(r => sourceOf(r) === source);
+      const usage = messageRecords(rows);
+      return {
+        source, sessions: new Set(rows.map(sessionKey)).size,
+        calls: rows.filter(isToolCall).length,
+        tokens: usage.reduce((s, r) => s + r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens, 0),
+        cache: usage.reduce((s, r) => s + r.cache_read_tokens, 0),
+        reasoning: usage.reduce((s, r) => s + (r.reasoning_output_tokens || 0), 0),
+      };
+    }).filter(r => r.sessions > 0);
+
     return {
       summary: {
         total: fmt(total),
         input: fmt(inputTok),
         output: fmt(outputTok),
         cache: fmt(cacheRead),
-        cost: fmtCost(totalCost),
+        reasoning: fmt(msgs.reduce((s, r) => s + (r.reasoning_output_tokens || 0), 0)),
+        cost: hasClaude ? fmtCost(totalCost) : '미산정',
         hit: (hitRate * 100).toFixed(0) + '%',
         skill: fmt(skillCnt),
         mcp: fmt(mcpCnt),
         costPerSession: sessionCount > 0 ? fmtCost(avgCost) : '-',
         topSession: topSession ? fmtCost(topSession.cost) : '-',
         topSessionDesc: topSession ? `가장 비쌌던 작업 (${topSession.project})` : '한 작업에서 가장 많이 든 비용(USD)',
-        wow,
-        saved: fmtCost(cacheSaved),
+        wow: hasClaude ? wow : '-',
+        saved: hasClaude ? fmtCost(cacheSaved) : '-',
         opusShare,
       },
       trend, skill, plugin, mcp, subagent, general, project, tokens,
       worktype, cost, costNote, worktypeCost, worktypeTrend, heatmap,
-      sessionRows, projection,
+      sessionRows, projection, sourceRows,
     };
-  }, [base, period]);
 }
